@@ -10,11 +10,19 @@
 # Description: OpenWrt DIY script part 1 (Before Update feeds)
 #
 
-# 只添加 passwall_packages feed（仓库结构正常，可走feed）
+# 修复 git.openwrt.org 503 问题：替换为 GitHub 镜像
+sed -i 's|https://git.openwrt.org/feed/packages.git|https://github.com/openwrt/packages.git|g' feeds.conf.default
+sed -i 's|https://git.openwrt.org/project/luci.git|https://github.com/openwrt/luci.git|g' feeds.conf.default
+sed -i 's|https://git.openwrt.org/feed/routing.git|https://github.com/openwrt/routing.git|g' feeds.conf.default
+sed -i 's|https://git.openwrt.org/feed/telephony.git|https://github.com/openwrt/telephony.git|g' feeds.conf.default
+
+echo "=== feeds.conf.default after fix ==="
+cat feeds.conf.default
+
+# 添加 passwall_packages feed
 echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main" >> feeds.conf.default
 
 # passwall2 不走feed，直接克隆到package目录
-# 因为仓库是子目录结构，feed系统无法解析
 git clone --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall2.git /tmp/passwall2
 if [ -d "/tmp/passwall2/luci-app-passwall2" ]; then
     cp -r /tmp/passwall2/luci-app-passwall2 package/luci-app-passwall2
