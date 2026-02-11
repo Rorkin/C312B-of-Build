@@ -58,7 +58,7 @@ jobs:
       run: |
         sudo rm -rf /etc/apt/sources.list.d/*
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev golang
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -86,30 +86,53 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a 2>&1 || true
+        # 验证核心feed是否拉取成功
+        for feed in packages luci routing; do
+          if [ ! -d "feeds/$feed" ] || [ -z "$(ls -A feeds/$feed 2>/dev/null)" ]; then
+            echo "ERROR: feed '$feed' failed to clone, retrying..."
+            rm -rf feeds/$feed
+            ./scripts/feeds update $feed 2>&1 || true
+          fi
+        done
+        echo "=== Feed directories ==="
+        ls -d feeds/*/
 
     - name: Remove problematic packages
       run: |
         cd openwrt
-        # 删除需要Rust编译器的包，在MIPS平台上无法编译
+        # 删除需要新版Go/Rust编译器的包，在22.03上无法编译
         rm -rf feeds/passwall_packages/shadow-tls
         rm -rf feeds/passwall_packages/shadowsocks-rust
-        echo "Removed shadow-tls and shadowsocks-rust"
+        rm -rf feeds/passwall_packages/sing-box
+        rm -rf feeds/passwall_packages/geoview
+        rm -rf feeds/passwall_packages/naiveproxy
+        rm -rf feeds/passwall_packages/tuic-client
+        echo "=== Remaining passwall packages ==="
+        ls feeds/passwall_packages/
 
     - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a
+      run: |
+        cd openwrt
+        ./scripts/feeds install -a 2>&1 || true
+        # 强制重新安装确保所有包被链接
+        ./scripts/feeds install -a -f 2>&1 || true
 
     - name: Verify packages
       run: |
         cd openwrt
         echo "=== luci-app-passwall2 ==="
         ls package/luci-app-passwall2/Makefile && echo "OK" || echo "MISSING!"
-        echo "=== passwall_packages feed ==="
-        ls feeds/passwall_packages/ | head -20
-        echo "=== xray-core ==="
-        ls package/feeds/passwall_packages/xray-core 2>/dev/null && echo "OK" || echo "MISSING!"
-        echo "=== chinadns-ng ==="
-        ls package/feeds/passwall_packages/chinadns-ng 2>/dev/null && echo "OK" || echo "MISSING!"
+        echo "=== Key passwall packages ==="
+        for pkg in chinadns-ng dns2socks ipt2socks microsocks shadowsocks-libev shadowsocksr-libev simple-obfs tcping trojan-plus xray-core v2ray-geodata v2ray-plugin hysteria; do
+          ls feeds/passwall_packages/$pkg/Makefile 2>/dev/null && echo "$pkg: OK" || echo "$pkg: MISSING"
+        done
+        echo "=== Core feeds ==="
+        for feed in packages luci routing; do
+          [ -d "feeds/$feed" ] && echo "$feed: OK" || echo "$feed: MISSING!"
+        done
 
     - name: Load custom configuration
       run: |
@@ -210,7 +233,7 @@ jobs:
         touch release.txt
         echo "## 极路由3 Pro C312B (HiWiFi R33) OpenWrt固件" >> release.txt
         echo "- 平台: ramips/mt7620 (MT7620A)" >> release.txt
-        echo "- 包含: LuCI中文界面 + Passwall2(Xray/Hysteria)" >> release.txt
+        echo "- 包含: LuCI中文界面 + Passwall2(Xray)" >> release.txt
         echo "- 默认IP: 192.168.10.1" >> release.txt
         echo "- 默认无密码, 请及时设置" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
