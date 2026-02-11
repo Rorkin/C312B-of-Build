@@ -89,22 +89,41 @@ jobs:
       run: cd openwrt && ./scripts/feeds update -a
 
     - name: Install feeds
-      run: |
-        cd openwrt
-        # 删除有问题的Rust包，避免Makefile报错阻断安装
-        rm -rf feeds/passwall_packages/shadow-tls
-        rm -rf feeds/passwall_packages/shadowsocks-rust
-        ./scripts/feeds install -a
+      run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Verify passwall2
+    - name: Fix passwall2 feeds
       run: |
         cd openwrt
-        echo "=== passwall2 package ==="
-        ls -la package/luci-app-passwall2/ || echo "ERROR: luci-app-passwall2 not found!"
-        echo "=== passwall_packages feed ==="
-        ls feeds/passwall_packages/ || echo "ERROR: passwall_packages feed not found!"
-        echo "=== passwall_packages symlinks ==="
-        ls package/feeds/passwall_packages/ 2>/dev/null | head -20 || echo "No passwall_packages symlinks"
+        
+        # 检查passwall2 feed是否正确
+        if [ ! -d "feeds/passwall2" ] || [ -z "$(ls -A feeds/passwall2 2>/dev/null)" ]; then
+          echo "Fixing passwall2 feed structure..."
+          rm -rf feeds/passwall2
+          mkdir -p feeds/passwall2
+          
+          git clone --depth 1 https://github.com/xiaorouji/openwrt-passwall2.git /tmp/passwall2
+          
+          if [ -d "/tmp/passwall2/luci-app-passwall2" ]; then
+            cp -r /tmp/passwall2/luci-app-passwall2 feeds/passwall2/luci-app-passwall2
+          else
+            cp -r /tmp/passwall2/* feeds/passwall2/
+          fi
+          
+          rm -rf /tmp/passwall2
+          
+          ./scripts/feeds update -i
+          ./scripts/feeds install -a -f
+        fi
+        
+        # 验证
+        echo "=== Checking passwall2 ==="
+        ls -la feeds/passwall2/ || echo "feeds/passwall2 directory not found"
+        find feeds/passwall2 -name "Makefile" | head -5
+        echo "=== Checking passwall_packages ==="
+        ls feeds/passwall_packages/ | head -20
+        echo "=== Checking package symlinks ==="
+        ls -la package/feeds/passwall2/ 2>/dev/null || echo "package/feeds/passwall2 not found"
+        ls -la package/feeds/passwall_packages/ 2>/dev/null | head -10
 
     - name: Load custom configuration
       run: |
@@ -151,8 +170,8 @@ jobs:
             echo "status=success" >> $GITHUB_OUTPUT
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "=== Build failed! Last 200 lines ==="
-            tail -200 /workdir/build_v.log
+            echo "=== Build failed! Last 100 lines ==="
+            tail -100 /workdir/build_v.log
             exit 1
           fi
         fi
