@@ -30,5 +30,15 @@ else
     cp -r /tmp/passwall2 package/luci-app-passwall2
 fi
 rm -rf /tmp/passwall2
+
+# 关键修复：去掉 passwall2 Makefile 中对 geoview 的依赖
+# geoview 需要新版Go，在22.03上无法编译
+if [ -f "package/luci-app-passwall2/Makefile" ]; then
+    sed -i 's/+geoview//g' package/luci-app-passwall2/Makefile
+    sed -i 's/geoview//g' package/luci-app-passwall2/Makefile
+    echo "=== Removed geoview dependency from passwall2 Makefile ==="
+    grep -i 'DEPENDS' package/luci-app-passwall2/Makefile | head -5
+fi
+
 echo "=== luci-app-passwall2 installed ==="
 ls package/luci-app-passwall2/
