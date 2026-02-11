@@ -9,9 +9,18 @@
 # File name: diy-part1.sh
 # Description: OpenWrt DIY script part 1 (Before Update feeds)
 #
-# iStore
-# echo "src-git istore https://github.com/linkease/istore;main" >> feeds.conf.default
-#
-# Add Passwall2 feed sources
+
+# 只添加 passwall_packages feed（仓库结构正常，可走feed）
 echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main" >> feeds.conf.default
-echo "src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2.git;main" >> feeds.conf.default
+
+# passwall2 不走feed，直接克隆到package目录
+# 因为仓库是子目录结构，feed系统无法解析
+git clone --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall2.git /tmp/passwall2
+if [ -d "/tmp/passwall2/luci-app-passwall2" ]; then
+    cp -r /tmp/passwall2/luci-app-passwall2 package/luci-app-passwall2
+else
+    cp -r /tmp/passwall2 package/luci-app-passwall2
+fi
+rm -rf /tmp/passwall2
+echo "=== luci-app-passwall2 installed ==="
+ls package/luci-app-passwall2/
