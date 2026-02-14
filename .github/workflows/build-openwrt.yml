@@ -1,34 +1,16 @@
-#
-# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# Description: Build OpenWrt using GitHub Actions
-#
-
-name: Build OpenWrt
+name: Build OpenWrt 23.05 for Hiwifi R33
 
 on:
   repository_dispatch:
   workflow_dispatch:
-    inputs:
-      ssh:
-        description: 'SSH connection to Actions'
-        required: false
-        default: 'false'
 
 env:
-  REPO_URL: https://github.com/mengzonefire/22.03-of
-  REPO_BRANCH: openwrt-22.03
+  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_BRANCH: openwrt-23.05
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -36,36 +18,18 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Free disk space
-      run: |
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-        sudo docker image prune --all --force
-        df -hT
-
     - name: Checkout
       uses: actions/checkout@main
-      with:
-        fetch-depth: 0
 
     - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/*
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev golang
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
+        sudo apt-get update
+        sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev golang
 
     - name: Clone source code
-      working-directory: /workdir
       run: |
-        df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        ln -sf $GITHUB_WORKSPACE/openwrt /workdir
 
     - name: Cache
       uses: klever1988/cachewrtbuild@main
@@ -73,177 +37,29 @@ jobs:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
 
-    - name: Load custom feeds
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
-
-    - name: Update feeds
+    - name: Upgrade Go toolchain (Mandatory for Xray 26+)
       run: |
         cd openwrt
-        ./scripts/feeds update -a 2>&1 || true
-        for feed in packages luci routing passwall_packages passwall2; do
-          if [ ! -d "feeds/$feed" ] || [ -z "$(ls -A feeds/$feed 2>/dev/null)" ]; then
-            echo "WARNING: feed $feed missing, retrying..."
-            rm -rf feeds/$feed
-            ./scripts/feeds update $feed 2>&1 || true
-          fi
-        done
-        echo "=== Feed directories ==="
-        ls -d feeds/*/
-
-    - name: Upgrade Go toolchain
-      run: |
-        cd openwrt
-        echo "=== Old Go version ==="
-        grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile 2>/dev/null | head -3 || echo "Not found"
+        # 彻底移除旧版 Go 缓存，强制重新编译/下载
         rm -rf feeds/packages/lang/golang
         git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
-        echo "=== New Go version ==="
-        grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -3
 
-    - name: Remove problematic packages
+    - name: Load custom feeds & Update
       run: |
+        chmod +x $DIY_P1_SH
+        ./$DIY_P1_SH
         cd openwrt
-        rm -rf feeds/passwall_packages/geoview
-        rm -rf feeds/passwall_packages/naiveproxy
-        rm -rf feeds/passwall_packages/shadow-tls
-        echo "=== Remaining passwall packages ==="
-        ls feeds/passwall_packages/
-
-    - name: Install feeds
-      run: |
-        cd openwrt
-        ./scripts/feeds install -a 2>&1 || true
-        ./scripts/feeds install -a -f 2>&1 || true
-
-    - name: Verify critical packages
-      run: |
-        cd openwrt
-        echo "========== Critical packages check =========="
-        for pkg in luci-app-passwall2 xray-core hysteria chinadns-ng dns2socks ipt2socks microsocks shadowsocks-libev trojan-plus simple-obfs; do
-          found=$(find package feeds -name "Makefile" -path "*/$pkg/*" 2>/dev/null | head -1)
-          if [ -n "$found" ]; then
-            echo "OK: $pkg"
-          else
-            echo "MISSING: $pkg"
-          fi
-        done
-        echo "========== Go toolchain =========="
-        grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -1
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
     - name: Load custom configuration
       run: |
-        [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-
-    - name: SSH connection to Actions
-      uses: P3TERX/ssh2actions@v1.0.0
-      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh != 'false') || contains(github.event.action, 'ssh')
-      env:
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-
-    - name: Download package
-      id: package
-      run: |
-        cd openwrt
-        echo -e 'CONFIG_DEVEL=y\nCONFIG_CCACHE=y' >> .config
-        make defconfig
-        echo "=== Passwall2 config ==="
-        grep -i 'passwall' .config || echo "No passwall config"
-        echo "=== Hysteria config ==="
-        grep -i 'hysteria' .config || echo "No hysteria config"
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        ./$DIY_P2_SH
 
     - name: Compile the firmware
-      id: compile
       run: |
         cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) 2>&1 | tee /workdir/build.log || true
-        if ls bin/targets/ramips/mt7620/*sysupgrade* 1>/dev/null 2>&1; then
-          echo "status=success" >> $GITHUB_OUTPUT
-          echo "Firmware built successfully!"
-          ls -lh bin/targets/ramips/mt7620/*sysupgrade*
-        else
-          echo "First attempt failed, retrying single thread..."
-          make -j1 V=s 2>&1 | tee /workdir/build_v.log || true
-          if ls bin/targets/ramips/mt7620/*sysupgrade* 1>/dev/null 2>&1; then
-            echo "status=success" >> $GITHUB_OUTPUT
-          else
-            echo "status=failed" >> $GITHUB_OUTPUT
-            echo "=== Last 200 lines ==="
-            tail -200 /workdir/build_v.log
-            exit 1
-          fi
-        fi
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
-    - name: Upload build log on failure
-      if: failure()
-      uses: actions/upload-artifact@main
-      with:
-        name: build-log
-        path: |
-          /workdir/build.log
-          /workdir/build_v.log
-
-    - name: Check space usage
-      if: "!cancelled()"
-      run: df -hT
-
-    - name: Upload bin directory
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
-    - name: Organize files
-      id: organize
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-      run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload firmware directory
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
-
-    - name: Generate release tag
-      id: tag
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        touch release.txt
-        echo "Hiwifi R33 OpenWrt 22.03 Firmware" >> release.txt
-        echo "Platform: ramips/mt7620 MT7620A 128MB NAND" >> release.txt
-        echo "Includes: LuCI Chinese + PassWall2 + Xray + Hysteria2" >> release.txt
-        echo "Default IP: 192.168.10.1" >> release.txt
-        echo "Default password: none" >> release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload firmware to release
-      uses: softprops/action-gh-release@v1
-      if: steps.tag.outputs.status == 'success' && !cancelled()
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.tag.outputs.release_tag }}
-        body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        make defconfig
+        make -j$(nproc) || make -j1 V=s
