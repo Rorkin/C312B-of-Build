@@ -1,4 +1,4 @@
-name: Build OpenWrt 23.05 for Hiwifi R33
+name: Build OpenWrt 23.05
 
 on:
   repository_dispatch:
@@ -37,17 +37,23 @@ jobs:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
 
-    - name: Upgrade Go toolchain (Mandatory for Xray 26+)
+    - name: Upgrade Go toolchain (Targeting Go 1.23 for Xray 26+)
       run: |
         cd openwrt
-        # 彻底移除旧版 Go 缓存，强制重新编译/下载
+        # 移除自带旧版 Go 源码
         rm -rf feeds/packages/lang/golang
+        # 使用 sbwml 的 Go 升级包
         git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
 
-    - name: Load custom feeds & Update
+    - name: Load custom feeds
       run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
-        ./$DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: Update & Install feeds
+      run: |
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
@@ -56,7 +62,8 @@ jobs:
       run: |
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
-        ./$DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: Compile the firmware
       run: |
