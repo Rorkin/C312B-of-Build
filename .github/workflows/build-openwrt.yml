@@ -103,8 +103,9 @@ jobs:
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile 2>/dev/null | head -3 || echo "Not found"
 
         # 替换 Go 工具链为 sbwml 维护的新版 (Go 1.23.x)
+        # 【修改】从 23.x 改为 24.x，提供 Go 1.24.x 以满足 Hysteria 2.7.0 的要求
         rm -rf feeds/packages/lang/golang
-        git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
+        git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
 
         echo "=== New Go version ==="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -3
