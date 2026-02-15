@@ -20,8 +20,6 @@ on:
         default: 'false'
 
 env:
-  # 【修改】改用官方 OpenWrt 23.05 源码
-  # 原因：22.03 的 Go 1.19 无法编译新版 Xray，导致 PassWall2 配置不兼容
   REPO_URL: https://github.com/openwrt/openwrt.git
   REPO_BRANCH: openwrt-23.05
   FEEDS_CONF: feeds.conf.default
@@ -69,6 +67,114 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
+    #=====================================================
+    # 【新增关键步骤】从 mengzonefire fork 移植 R33 设备支持
+    #=====================================================
+    - name: Port Hiwifi R33 device support from 22.03 fork
+      run: |
+        cd openwrt
+        echo "=== Porting Hiwifi R33 device support to OpenWrt 23.05 ==="
+
+        # 1. 克隆 mengzonefire 的 fork（只取设备定义文件）
+        git clone --depth 1 https://github.com/mengzonefire/22.03-of -b openwrt-22.03 /tmp/r33-source
+
+        # 2. 查找 R33 DTS 文件
+        echo "=== Searching R33 DTS files ==="
+        find /tmp/r33-source/target/linux/ramips/dts/ -iname "*r33*" | tee /tmp/r33-dts-list.txt
+        # 也查找 hc5661 (R33 的硬件型号名)
+        find /tmp/r33-source/target/linux/ramips/dts/ -iname "*hc5661*" | tee -a /tmp/r33-dts-list.txt
+
+        # 3. 复制 DTS 文件到 23.05 源码树
+        while IFS= read -r dts_file; do
+          if [ -n "$dts_file" ] && [ -f "$dts_file" ]; then
+            fname=$(basename "$dts_file")
+            echo "Copying DTS: $fname"
+            cp "$dts_file" target/linux/ramips/dts/
+          fi
+        done < /tmp/r33-dts-list.txt
+
+        # 4. 提取 R33 设备定义块并追加到 23.05 的 image Makefile
+        echo "=== Extracting R33 device definition from image Makefile ==="
+        R33_SRC="/tmp/r33-source/target/linux/ramips/image/mt7620.mk"
+        R33_DST="target/linux/ramips/image/mt7620.mk"
+
+        if [ -f "$R33_SRC" ]; then
+          # 用 awk 提取 define Device/hiwifi_r33 到 TARGET_DEVICES += hiwifi_r33 的完整块
+          awk '
+            /^define Device\/hiwifi_r33$/ { found=1 }
+            found { print }
+            found && /^TARGET_DEVICES \+= hiwifi_r33$/ { found=0; exit }
+          ' "$R33_SRC" > /tmp/r33-device-block.txt
+
+          if [ -s /tmp/r33-device-block.txt ]; then
+            echo "" >> "$R33_DST"
+            echo "# === Hiwifi R33 - ported from mengzonefire/22.03-of ===" >> "$R33_DST"
+            cat /tmp/r33-device-block.txt >> "$R33_DST"
+            echo "=== R33 device definition successfully added ==="
+            cat /tmp/r33-device-block.txt
+          else
+            echo "WARNING: awk extraction empty, trying alternative patterns..."
+            # 尝试其他可能的设备名
+            for devname in hiwifi_r33 hiwifi-r33 hiwifi_hc5661-nand hiwifi_r33-nand; do
+              awk -v dev="$devname" '
+                $0 ~ "^define Device/" dev "$" { found=1 }
+                found { print }
+                found && $0 ~ "^TARGET_DEVICES \\+= " dev "$" { found=0; exit }
+              ' "$R33_SRC" > /tmp/r33-device-block.txt
+              if [ -s /tmp/r33-device-block.txt ]; then
+                echo "Found device as: $devname"
+                echo "" >> "$R33_DST"
+                echo "# === Hiwifi R33 ($devname) - ported from mengzonefire/22.03-of ===" >> "$R33_DST"
+                cat /tmp/r33-device-block.txt >> "$R33_DST"
+                cat /tmp/r33-device-block.txt
+                break
+              fi
+            done
+          fi
+
+          # 如果仍未找到，打印所有 hiwifi 相关定义供调试
+          if [ ! -s /tmp/r33-device-block.txt ]; then
+            echo "=== ALL hiwifi entries in mengzonefire mt7620.mk ==="
+            grep -n -i "hiwifi\|r33" "$R33_SRC" || echo "No hiwifi/r33 entries found"
+            echo "=== FULL mt7620.mk from mengzonefire ==="
+            cat "$R33_SRC"
+          fi
+        else
+          echo "ERROR: mengzonefire mt7620.mk not found at $R33_SRC"
+        fi
+
+        # 5. 查找并复制 R33 相关的内核补丁（如果有）
+        echo "=== Checking for R33 kernel patches ==="
+        # 22.03 用 patches-5.10，23.05 用 patches-5.15
+        if [ -d "/tmp/r33-source/target/linux/ramips/patches-5.10/" ]; then
+          for patch in $(find /tmp/r33-source/target/linux/ramips/patches-5.10/ -iname "*r33*" -o -iname "*hc5661*" 2>/dev/null); do
+            fname=$(basename "$patch")
+            echo "Copying patch: $fname (may need manual review for 5.15 compatibility)"
+            cp "$patch" target/linux/ramips/patches-5.15/ 2>/dev/null || true
+          done
+        fi
+
+        # 6. 检查是否有自定义文件（如默认配置等）
+        if [ -d "/tmp/r33-source/target/linux/ramips/mt7620/" ]; then
+          echo "=== Copying mt7620 subtarget files ==="
+          # 不要覆盖已有文件，只补充缺失的
+          cp -n /tmp/r33-source/target/linux/ramips/mt7620/* target/linux/ramips/mt7620/ 2>/dev/null || true
+        fi
+
+        # 7. 清理临时文件
+        rm -rf /tmp/r33-source /tmp/r33-dts-list.txt /tmp/r33-device-block.txt
+
+        # 8. 验证
+        echo ""
+        echo "========== VERIFICATION =========="
+        echo "--- R33 DTS files ---"
+        ls -la target/linux/ramips/dts/*r33* target/linux/ramips/dts/*hc5661* 2>/dev/null || echo "WARNING: No R33/HC5661 DTS files found!"
+        echo "--- R33 in image Makefile ---"
+        grep -c "hiwifi_r33\|hiwifi-r33" target/linux/ramips/image/mt7620.mk && echo "R33 device found in image Makefile" || echo "WARNING: R33 NOT in image Makefile!"
+        echo "--- R33 device definition ---"
+        grep -A 15 "Device/hiwifi_r33\|Device/hiwifi-r33" target/linux/ramips/image/mt7620.mk || echo "No definition block found"
+        echo "========== END VERIFICATION =========="
+
     - name: Cache
       uses: klever1988/cachewrtbuild@main
       with:
@@ -102,16 +208,12 @@ jobs:
         echo "=== Old Go version ==="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile 2>/dev/null | head -3 || echo "Not found"
 
-        # 替换 Go 工具链为 sbwml 维护的新版 (Go 1.23.x)
-        # 【修改】从 23.x 改为 24.x，提供 Go 1.24.x 以满足 Hysteria 2.7.0 的要求
         rm -rf feeds/packages/lang/golang
         git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
 
         echo "=== New Go version ==="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -3
 
-        # 【关键修复】强制清除缓存中的旧版 Go 编译产物
-        # 防止 cachewrtbuild 恢复的旧 Go 二进制文件阻止新版编译
         echo "=== Cleaning cached Go build artifacts ==="
         rm -rf build_dir/hostpkg/go-*
         rm -rf build_dir/host/go-*
@@ -120,7 +222,6 @@ jobs:
         rm -rf staging_dir/hostpkg/lib/go/
         rm -rf dl/go-src-*
         rm -rf dl/golang-*
-        # 清除 Xray/Hysteria 旧编译产物，强制用新 Go 重编译
         rm -rf build_dir/target-*/xray-core*
         rm -rf build_dir/target-*/hysteria*
         rm -rf build_dir/target-*/sing-box*
@@ -158,9 +259,8 @@ jobs:
         done
         echo "========== Go toolchain =========="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -1
-        echo "========== Go host binary check =========="
-        ls -la staging_dir/hostpkg/bin/go* 2>/dev/null || echo "No cached Go binary (good - will build fresh)"
-        ls -la staging_dir/host/bin/go* 2>/dev/null || echo "No cached Go host binary (good)"
+        echo "========== R33 device check =========="
+        grep "hiwifi_r33\|hiwifi-r33" target/linux/ramips/image/mt7620.mk | head -5 || echo "WARNING: R33 not in image!"
 
     - name: Load custom configuration
       run: |
@@ -183,12 +283,12 @@ jobs:
         cd openwrt
         echo -e 'CONFIG_DEVEL=y\nCONFIG_CCACHE=y' >> .config
         make defconfig
+        echo "=== Device check ==="
+        grep 'hiwifi_r33\|DEVICE_hiwifi' .config || echo "WARNING: R33 NOT in final config!"
+        echo "=== MULTI_PROFILE check ==="
+        grep 'MULTI_PROFILE' .config || echo "No MULTI_PROFILE setting"
         echo "=== Passwall2 config ==="
-        grep -i 'passwall' .config || echo "No passwall config"
-        echo "=== Xray config ==="
-        grep -i 'xray' .config || echo "No xray config"
-        echo "=== Hysteria config ==="
-        grep -i 'hysteria' .config || echo "No hysteria config"
+        grep -i 'passwall' .config | head -5 || echo "No passwall config"
         echo "=== dnsmasq nftset ==="
         grep -i 'nftset' .config || echo "No nftset config"
         make download -j8
@@ -201,9 +301,13 @@ jobs:
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) 2>&1 | tee /workdir/build.log || true
-        if ls bin/targets/ramips/mt7620/*sysupgrade* 1>/dev/null 2>&1; then
+        if ls bin/targets/ramips/mt7620/*hiwifi*r33*sysupgrade* 1>/dev/null 2>&1; then
           echo "status=success" >> $GITHUB_OUTPUT
-          echo "Firmware built successfully!"
+          echo "R33 Firmware built successfully!"
+          ls -lh bin/targets/ramips/mt7620/*hiwifi*r33*
+        elif ls bin/targets/ramips/mt7620/*sysupgrade* 1>/dev/null 2>&1; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "Firmware built (checking for R33):"
           ls -lh bin/targets/ramips/mt7620/*sysupgrade*
         else
           echo "First attempt failed, retrying single thread..."
@@ -212,6 +316,10 @@ jobs:
             echo "status=success" >> $GITHUB_OUTPUT
           else
             echo "status=failed" >> $GITHUB_OUTPUT
+            echo "=== What files exist in target dir ==="
+            ls -lhR bin/targets/ramips/mt7620/ 2>/dev/null || echo "No target dir"
+            echo "=== R33 related build artifacts ==="
+            find build_dir/ -iname "*r33*" -o -iname "*hiwifi*" 2>/dev/null | head -20
             echo "=== Last 200 lines ==="
             tail -200 /workdir/build_v.log
             exit 1
@@ -221,31 +329,20 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    # 【新增】编译后验证关键包版本，提前发现版本不匹配问题
     - name: Verify built package versions
       if: steps.compile.outputs.status == 'success'
       run: |
         cd openwrt
         echo "========== Built package versions =========="
         echo "--- Xray-core ---"
-        XRAY_IPK=$(find bin/ -name "xray-core*.ipk" 2>/dev/null | head -1)
-        if [ -n "$XRAY_IPK" ]; then
-          echo "OK: $XRAY_IPK"
-          XRAY_VER=$(echo "$XRAY_IPK" | grep -oP 'xray-core_\K[0-9.]+')
-          echo "Version: $XRAY_VER"
-          if echo "$XRAY_VER" | grep -q "^1\.7"; then
-            echo "!!! CRITICAL WARNING: Xray 1.7.x detected - PassWall2 will NOT work !!!"
-            echo "!!! Need Xray 24.x+ for PassWall2 v26 compatibility !!!"
-          fi
-        else
-          echo "WARNING: xray-core IPK not found!"
-        fi
+        find bin/ -name "xray-core*.ipk" 2>/dev/null | head -1
         echo "--- Hysteria ---"
-        find bin/ -name "hysteria*.ipk" 2>/dev/null || echo "Not found"
+        find bin/ -name "hysteria*.ipk" 2>/dev/null | head -1
         echo "--- PassWall2 ---"
-        find bin/ -name "luci-app-passwall2*.ipk" 2>/dev/null || echo "Not found"
-        echo "--- Go version used ---"
-        grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -1
+        find bin/ -name "luci-app-passwall2*.ipk" 2>/dev/null | head -1
+        echo "--- Firmware files ---"
+        ls -lh bin/targets/ramips/mt7620/*r33* 2>/dev/null || echo "No R33-specific files"
+        ls -lh bin/targets/ramips/mt7620/*sysupgrade* 2>/dev/null || echo "No sysupgrade files"
 
     - name: Upload build log on failure
       if: failure()
@@ -291,7 +388,7 @@ jobs:
         touch release.txt
         echo "Hiwifi R33 OpenWrt 23.05 Firmware" >> release.txt
         echo "Platform: ramips/mt7620 MT7620A 128MB NAND" >> release.txt
-        echo "Includes: LuCI Chinese + PassWall2 + Xray 26.x + Hysteria2" >> release.txt
+        echo "Includes: LuCI Chinese + PassWall2 26.x + Xray 24.x + Hysteria2" >> release.txt
         echo "Default IP: 192.168.10.1" >> release.txt
         echo "Default password: none" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
