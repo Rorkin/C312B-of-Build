@@ -1,4 +1,4 @@
-name: Build OpenWrt 23.05 Final
+name: Build OpenWrt 23.05 Final Fixed
 
 on:
   repository_dispatch:
@@ -50,7 +50,7 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P1_SH
         ./scripts/feeds update -a
 
-    - name: Upgrade Go toolchain (For Hysteria/Xray-core)
+    - name: Upgrade Go toolchain (Go 1.24)
       run: |
         cd openwrt
         rm -rf feeds/packages/lang/golang
@@ -67,9 +67,12 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
+        # 强制运行脚本来移除冲突包
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: Compile the firmware
       run: |
         cd openwrt
         make defconfig
+        # 之前已经接近成功，这次使用多线程尝试
         make -j$(nproc) || make -j1 V=s
