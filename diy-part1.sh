@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # diy-part1.sh - Before Update feeds
+# 适配 OpenWrt 23.05
 #
 
 # === 1. 修复 git.openwrt.org 503 问题 ===
@@ -13,9 +14,8 @@ echo "=== feeds.conf.default after git fix ==="
 cat feeds.conf.default
 
 # === 2. 添加 PassWall2 相关 feeds ===
-# passwall_packages: 包含 hysteria, xray-core, sing-box 等核心组件
+# main 分支同时兼容 22.03 和 23.05
 echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main" >> feeds.conf.default
-# passwall2: LuCI 界面
 echo "src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2.git;main" >> feeds.conf.default
 
 echo "=== Final feeds.conf.default ==="
