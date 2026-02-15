@@ -27,16 +27,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev golang
         sudo timedatectl set-timezone "$TZ"
-        # 核心修复：创建工作目录并授权 
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
     - name: Clone source code
       working-directory: /workdir
       run: |
-        df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
-        # 建立软链接，方便后续步骤访问 [cite: 41]
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: Cache
@@ -45,23 +42,24 @@ jobs:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
 
-    - name: Upgrade Go toolchain
-      run: |
-        cd openwrt
-        rm -rf feeds/packages/lang/golang
-        git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
-
-    - name: Load custom feeds
+    - name: Update Feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
+        ./scripts/feeds update -a
 
-    - name: Update & Install feeds
+    - name: Upgrade Go toolchain (FIX: Branch 24.x & Proper Sequence)
       run: |
         cd openwrt
-        ./scripts/feeds update -a
+        # 必须在 update 之后删除并重新克隆，否则会被官方源覆盖
+        rm -rf feeds/packages/lang/golang
+        git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
+
+    - name: Install Feeds
+      run: |
+        cd openwrt
         ./scripts/feeds install -a
 
     - name: Load custom configuration
@@ -75,4 +73,5 @@ jobs:
       run: |
         cd openwrt
         make defconfig
+        # 针对 mt7620 建议先用单线程编译核心包，防止内存溢出
         make -j$(nproc) || make -j1 V=s
