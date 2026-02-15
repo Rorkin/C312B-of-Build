@@ -20,8 +20,10 @@ on:
         default: 'false'
 
 env:
-  REPO_URL: https://github.com/mengzonefire/22.03-of
-  REPO_BRANCH: openwrt-22.03
+  # 【修改】改用官方 OpenWrt 23.05 源码
+  # 原因：22.03 的 Go 1.19 无法编译新版 Xray，导致 PassWall2 配置不兼容
+  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_BRANCH: openwrt-23.05
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -99,10 +101,29 @@ jobs:
         cd openwrt
         echo "=== Old Go version ==="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile 2>/dev/null | head -3 || echo "Not found"
+
+        # 替换 Go 工具链为 sbwml 维护的新版 (Go 1.23.x)
         rm -rf feeds/packages/lang/golang
         git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
+
         echo "=== New Go version ==="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -3
+
+        # 【关键修复】强制清除缓存中的旧版 Go 编译产物
+        # 防止 cachewrtbuild 恢复的旧 Go 二进制文件阻止新版编译
+        echo "=== Cleaning cached Go build artifacts ==="
+        rm -rf build_dir/hostpkg/go-*
+        rm -rf build_dir/host/go-*
+        rm -rf staging_dir/hostpkg/bin/go*
+        rm -rf staging_dir/host/bin/go*
+        rm -rf staging_dir/hostpkg/lib/go/
+        rm -rf dl/go-src-*
+        rm -rf dl/golang-*
+        # 清除 Xray/Hysteria 旧编译产物，强制用新 Go 重编译
+        rm -rf build_dir/target-*/xray-core*
+        rm -rf build_dir/target-*/hysteria*
+        rm -rf build_dir/target-*/sing-box*
+        echo "Go cache cleanup done"
 
     - name: Remove problematic packages
       run: |
@@ -127,12 +148,18 @@ jobs:
           found=$(find package feeds -name "Makefile" -path "*/$pkg/*" 2>/dev/null | head -1)
           if [ -n "$found" ]; then
             echo "OK: $pkg"
+            if [ "$pkg" = "xray-core" ] || [ "$pkg" = "hysteria" ]; then
+              grep 'PKG_VERSION' "$found" | head -1
+            fi
           else
             echo "MISSING: $pkg"
           fi
         done
         echo "========== Go toolchain =========="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -1
+        echo "========== Go host binary check =========="
+        ls -la staging_dir/hostpkg/bin/go* 2>/dev/null || echo "No cached Go binary (good - will build fresh)"
+        ls -la staging_dir/host/bin/go* 2>/dev/null || echo "No cached Go host binary (good)"
 
     - name: Load custom configuration
       run: |
@@ -144,7 +171,7 @@ jobs:
 
     - name: SSH connection to Actions
       uses: P3TERX/ssh2actions@v1.0.0
-      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh != 'false') || contains(github.event.action, 'ssh')
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
       env:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -157,8 +184,12 @@ jobs:
         make defconfig
         echo "=== Passwall2 config ==="
         grep -i 'passwall' .config || echo "No passwall config"
+        echo "=== Xray config ==="
+        grep -i 'xray' .config || echo "No xray config"
         echo "=== Hysteria config ==="
         grep -i 'hysteria' .config || echo "No hysteria config"
+        echo "=== dnsmasq nftset ==="
+        grep -i 'nftset' .config || echo "No nftset config"
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -188,6 +219,32 @@ jobs:
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    # 【新增】编译后验证关键包版本，提前发现版本不匹配问题
+    - name: Verify built package versions
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        cd openwrt
+        echo "========== Built package versions =========="
+        echo "--- Xray-core ---"
+        XRAY_IPK=$(find bin/ -name "xray-core*.ipk" 2>/dev/null | head -1)
+        if [ -n "$XRAY_IPK" ]; then
+          echo "OK: $XRAY_IPK"
+          XRAY_VER=$(echo "$XRAY_IPK" | grep -oP 'xray-core_\K[0-9.]+')
+          echo "Version: $XRAY_VER"
+          if echo "$XRAY_VER" | grep -q "^1\.7"; then
+            echo "!!! CRITICAL WARNING: Xray 1.7.x detected - PassWall2 will NOT work !!!"
+            echo "!!! Need Xray 24.x+ for PassWall2 v26 compatibility !!!"
+          fi
+        else
+          echo "WARNING: xray-core IPK not found!"
+        fi
+        echo "--- Hysteria ---"
+        find bin/ -name "hysteria*.ipk" 2>/dev/null || echo "Not found"
+        echo "--- PassWall2 ---"
+        find bin/ -name "luci-app-passwall2*.ipk" 2>/dev/null || echo "Not found"
+        echo "--- Go version used ---"
+        grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -1
 
     - name: Upload build log on failure
       if: failure()
@@ -231,9 +288,9 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "Hiwifi R33 OpenWrt 22.03 Firmware" >> release.txt
+        echo "Hiwifi R33 OpenWrt 23.05 Firmware" >> release.txt
         echo "Platform: ramips/mt7620 MT7620A 128MB NAND" >> release.txt
-        echo "Includes: LuCI Chinese + PassWall2 + Xray + Hysteria2" >> release.txt
+        echo "Includes: LuCI Chinese + PassWall2 + Xray 26.x + Hysteria2" >> release.txt
         echo "Default IP: 192.168.10.1" >> release.txt
         echo "Default password: none" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
