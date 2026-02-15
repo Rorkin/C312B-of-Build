@@ -27,7 +27,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev golang
         sudo timedatectl set-timezone "$TZ"
-        # 权限修复：创建工作目录并授权
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
@@ -51,10 +50,9 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P1_SH
         ./scripts/feeds update -a
 
-    - name: Upgrade Go toolchain (Mandatory for Go 1.24)
+    - name: Upgrade Go toolchain (For Hysteria/Xray-core)
       run: |
         cd openwrt
-        # 必须在 update 之后执行，强制替换为 1.24 版本源码
         rm -rf feeds/packages/lang/golang
         git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
 
@@ -74,5 +72,4 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        # 针对 mt7620 建议先多线程编译，若失败自动转单线程排错
         make -j$(nproc) || make -j1 V=s
