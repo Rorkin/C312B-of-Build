@@ -1,4 +1,4 @@
-name: Build OpenWrt 23.05 Final Fixed
+name: Build OpenWrt 23.05 Final Release
 
 on:
   repository_dispatch:
@@ -50,7 +50,7 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P1_SH
         ./scripts/feeds update -a
 
-    - name: Upgrade Go toolchain (Go 1.24)
+    - name: Upgrade Go toolchain
       run: |
         cd openwrt
         rm -rf feeds/packages/lang/golang
@@ -67,12 +67,49 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
-        # 强制运行脚本来移除冲突包
-        $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: Compile the firmware
+      id: compile
       run: |
         cd openwrt
         make defconfig
-        # 之前已经接近成功，这次使用多线程尝试
         make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Organize files
+      id: organize
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/ramips/mt7620
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate release tag
+      id: tag
+      if: env.FIRMWARE != '' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "Hiwifi R33 23.05 Firmware" >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v1
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
