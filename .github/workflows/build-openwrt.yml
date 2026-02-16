@@ -20,13 +20,12 @@ on:
         default: 'false'
 
 env:
-  REPO_URL: https://github.com/openwrt/openwrt.git
-  REPO_BRANCH: openwrt-23.05
+  REPO_URL: https://github.com/mengzonefire/22.03-of
+  REPO_BRANCH: openwrt-22.03
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  PORT_R33_SH: port-r33.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
@@ -67,12 +66,6 @@ jobs:
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-
-    - name: Port Hiwifi R33 NAND device support
-      run: |
-        chmod +x $PORT_R33_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$PORT_R33_SH
 
     - name: Cache
       uses: klever1988/cachewrtbuild@main
@@ -138,16 +131,10 @@ jobs:
         ./scripts/feeds install -a 2>&1 || true
         ./scripts/feeds install -a -f 2>&1 || true
 
-    - name: Verify critical packages and R33 support
+    - name: Verify critical packages
       run: |
         cd openwrt
-        echo "========== R33 Device Support =========="
-        echo "--- DTS files ---"
-        find target/linux/ramips/dts/ -type f -iname "*hiwifi*" 2>/dev/null || echo "NONE"
-        echo "--- Image definition ---"
-        grep -c -i "hiwifi" target/linux/ramips/image/mt7620.mk 2>/dev/null || echo "0"
-        echo ""
-        echo "========== Packages =========="
+        echo "========== Critical packages =========="
         for pkg in luci-app-passwall2 xray-core hysteria chinadns-ng dns2socks ipt2socks microsocks shadowsocks-libev trojan-plus simple-obfs; do
           found=$(find package feeds -name "Makefile" -path "*/$pkg/*" 2>/dev/null | head -1)
           if [ -n "$found" ]; then
@@ -161,6 +148,8 @@ jobs:
         done
         echo "========== Go =========="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -1
+        echo "========== R33 device =========="
+        grep -c "hiwifi_r33" target/linux/ramips/image/mt7620.mk || echo "0"
 
     - name: Load custom configuration
       run: |
@@ -184,11 +173,11 @@ jobs:
         echo -e 'CONFIG_DEVEL=y\nCONFIG_CCACHE=y' >> .config
         make defconfig
         echo "=== R33 in config ==="
-        grep -i 'hiwifi_r33\|DEVICE_hiwifi' .config || echo "WARNING: R33 NOT in config"
-        echo "=== NAND support ==="
-        grep -i 'NAND\|UBI\|UBIFS' .config | head -10 || echo "No NAND"
+        grep -i 'hiwifi_r33\|DEVICE_hiwifi' .config || echo "WARNING: no R33"
         echo "=== Passwall2 ==="
         grep -i 'passwall' .config | head -5 || echo "No passwall"
+        echo "=== dnsmasq nftset ==="
+        grep -i 'nftset' .config || echo "No nftset"
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -199,9 +188,6 @@ jobs:
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) 2>&1 | tee /workdir/build.log || true
-        echo "=== Checking firmware output ==="
-        find bin/targets/ramips/mt7620/ -name "*hiwifi*" -o -name "*r33*" 2>/dev/null || echo "No R33 files"
-        find bin/targets/ramips/mt7620/ -name "*sysupgrade*" 2>/dev/null || echo "No sysupgrade files"
         if ls bin/targets/ramips/mt7620/*sysupgrade* 1>/dev/null 2>&1; then
           echo "status=success" >> $GITHUB_OUTPUT
           echo "Firmware built successfully!"
@@ -213,10 +199,6 @@ jobs:
             echo "status=success" >> $GITHUB_OUTPUT
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "=== All target files ==="
-            ls -lhR bin/targets/ramips/mt7620/ 2>/dev/null || echo "No target dir"
-            echo "=== NAND/UBI errors ==="
-            grep -i "nand\|ubi\|ubinize\|hiwifi\|r33\|fwtool" /workdir/build_v.log | tail -30 || true
             echo "=== Last 200 lines ==="
             tail -200 /workdir/build_v.log
             exit 1
@@ -231,13 +213,17 @@ jobs:
       run: |
         cd openwrt
         echo "=== Xray-core ==="
-        find bin/ -name "xray-core*.ipk" 2>/dev/null | head -1 || echo "Not found"
+        XRAY=$(find bin/ -name "xray-core*.ipk" 2>/dev/null | head -1)
+        echo "${XRAY:-NOT FOUND}"
+        if echo "$XRAY" | grep -q "1\.7"; then
+          echo "!!! WARNING: Old Xray 1.7.x detected !!!"
+        fi
         echo "=== Hysteria ==="
         find bin/ -name "hysteria*.ipk" 2>/dev/null | head -1 || echo "Not found"
         echo "=== PassWall2 ==="
         find bin/ -name "luci-app-passwall2*.ipk" 2>/dev/null | head -1 || echo "Not found"
-        echo "=== R33 Firmware ==="
-        find bin/targets/ -name "*r33*" -o -name "*hiwifi*" 2>/dev/null || echo "No R33 files"
+        echo "=== Firmware ==="
+        ls -lh bin/targets/ramips/mt7620/*sysupgrade* 2>/dev/null || echo "None"
 
     - name: Upload build log on failure
       if: failure()
@@ -281,7 +267,7 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "Hiwifi R33 OpenWrt 23.05 Firmware (NAND)" >> release.txt
+        echo "Hiwifi R33 OpenWrt 22.03 Firmware" >> release.txt
         echo "Platform: ramips/mt7620 MT7620A 128MB NAND" >> release.txt
         echo "Includes: PassWall2 26.x + Xray 24.x + Hysteria2" >> release.txt
         echo "Default IP: 192.168.10.1" >> release.txt
