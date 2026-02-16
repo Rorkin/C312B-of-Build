@@ -67,121 +67,432 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    #=====================================================
-    # 【新增关键步骤】从 mengzonefire fork 移植 R33 设备支持
-    #=====================================================
-    - name: Port Hiwifi R33 device support from 22.03 fork
+    #==========================================================================
+    # 【核心步骤】从 mengzonefire/22.03-of 完整移植 R33 NAND Flash 设备支持
+    #==========================================================================
+    - name: Port Hiwifi R33 NAND device support from 22.03 fork
       run: |
         cd openwrt
-        echo "=== Porting Hiwifi R33 device support to OpenWrt 23.05 ==="
+        echo "============================================================"
+        echo "  Porting Hiwifi R33 (128MB NAND) device support to 23.05"
+        echo "============================================================"
 
-        # 1. 克隆 mengzonefire 的 fork（只取设备定义文件）
+        # ===== 1. 克隆 mengzonefire 源码 =====
+        echo ""
+        echo "===== Step 1: Clone mengzonefire fork ====="
         git clone --depth 1 https://github.com/mengzonefire/22.03-of -b openwrt-22.03 /tmp/r33-source
+        echo "Clone done"
 
-        # 2. 查找 R33 DTS 文件
-        echo "=== Searching R33 DTS files ==="
-        find /tmp/r33-source/target/linux/ramips/dts/ -iname "*r33*" | tee /tmp/r33-dts-list.txt
-        # 也查找 hc5661 (R33 的硬件型号名)
-        find /tmp/r33-source/target/linux/ramips/dts/ -iname "*hc5661*" | tee -a /tmp/r33-dts-list.txt
-
-        # 3. 复制 DTS 文件到 23.05 源码树
-        while IFS= read -r dts_file; do
-          if [ -n "$dts_file" ] && [ -f "$dts_file" ]; then
-            fname=$(basename "$dts_file")
-            echo "Copying DTS: $fname"
-            cp "$dts_file" target/linux/ramips/dts/
-          fi
-        done < /tmp/r33-dts-list.txt
-
-        # 4. 提取 R33 设备定义块并追加到 23.05 的 image Makefile
-        echo "=== Extracting R33 device definition from image Makefile ==="
-        R33_SRC="/tmp/r33-source/target/linux/ramips/image/mt7620.mk"
-        R33_DST="target/linux/ramips/image/mt7620.mk"
-
-        if [ -f "$R33_SRC" ]; then
-          # 用 awk 提取 define Device/hiwifi_r33 到 TARGET_DEVICES += hiwifi_r33 的完整块
-          awk '
-            /^define Device\/hiwifi_r33$/ { found=1 }
-            found { print }
-            found && /^TARGET_DEVICES \+= hiwifi_r33$/ { found=0; exit }
-          ' "$R33_SRC" > /tmp/r33-device-block.txt
-
-          if [ -s /tmp/r33-device-block.txt ]; then
-            echo "" >> "$R33_DST"
-            echo "# === Hiwifi R33 - ported from mengzonefire/22.03-of ===" >> "$R33_DST"
-            cat /tmp/r33-device-block.txt >> "$R33_DST"
-            echo "=== R33 device definition successfully added ==="
-            cat /tmp/r33-device-block.txt
-          else
-            echo "WARNING: awk extraction empty, trying alternative patterns..."
-            # 尝试其他可能的设备名
-            for devname in hiwifi_r33 hiwifi-r33 hiwifi_hc5661-nand hiwifi_r33-nand; do
-              awk -v dev="$devname" '
-                $0 ~ "^define Device/" dev "$" { found=1 }
-                found { print }
-                found && $0 ~ "^TARGET_DEVICES \\+= " dev "$" { found=0; exit }
-              ' "$R33_SRC" > /tmp/r33-device-block.txt
-              if [ -s /tmp/r33-device-block.txt ]; then
-                echo "Found device as: $devname"
-                echo "" >> "$R33_DST"
-                echo "# === Hiwifi R33 ($devname) - ported from mengzonefire/22.03-of ===" >> "$R33_DST"
-                cat /tmp/r33-device-block.txt >> "$R33_DST"
-                cat /tmp/r33-device-block.txt
-                break
-              fi
-            done
-          fi
-
-          # 如果仍未找到，打印所有 hiwifi 相关定义供调试
-          if [ ! -s /tmp/r33-device-block.txt ]; then
-            echo "=== ALL hiwifi entries in mengzonefire mt7620.mk ==="
-            grep -n -i "hiwifi\|r33" "$R33_SRC" || echo "No hiwifi/r33 entries found"
-            echo "=== FULL mt7620.mk from mengzonefire ==="
-            cat "$R33_SRC"
-          fi
+        # ===== 2. 对比分析 NAND 相关内核配置 =====
+        echo ""
+        echo "===== Step 2: Compare NAND kernel configs ====="
+        
+        # 22.03 使用 config-5.10, 23.05 使用 config-5.15
+        R33_KCONF="/tmp/r33-source/target/linux/ramips/mt7620/config-5.10"
+        CUR_KCONF="target/linux/ramips/mt7620/config-5.15"
+        
+        # 如果 23.05 中 config 路径不同，尝试其他位置
+        if [ ! -f "$CUR_KCONF" ]; then
+          CUR_KCONF=$(find target/linux/ramips/ -name "config-5.15" -path "*/mt7620/*" 2>/dev/null | head -1)
+          [ -z "$CUR_KCONF" ] && CUR_KCONF=$(find target/linux/ramips/ -name "config-*" -path "*/mt7620/*" 2>/dev/null | head -1)
+        fi
+        
+        echo "22.03 kernel config: $R33_KCONF"
+        echo "23.05 kernel config: $CUR_KCONF"
+        
+        if [ -f "$R33_KCONF" ] && [ -f "$CUR_KCONF" ]; then
+          echo ""
+          echo "--- NAND/MTD configs in 22.03 fork ---"
+          grep -i "NAND\|MTD_NAND\|UBI\|UBIFS" "$R33_KCONF" | sort
+          echo ""
+          echo "--- NAND/MTD configs in 23.05 official ---"
+          grep -i "NAND\|MTD_NAND\|UBI\|UBIFS" "$CUR_KCONF" | sort
+          echo ""
+          echo "--- Configs in 22.03 but NOT in 23.05 (NAND related) ---"
+          diff <(grep -i "NAND\|MTD_NAND\|UBI\|UBIFS" "$R33_KCONF" | sort) \
+               <(grep -i "NAND\|MTD_NAND\|UBI\|UBIFS" "$CUR_KCONF" | sort) \
+               | grep "^<" || echo "No missing NAND configs"
         else
-          echo "ERROR: mengzonefire mt7620.mk not found at $R33_SRC"
+          echo "WARNING: Cannot compare - config file(s) missing"
+          echo "Available configs:"
+          find target/linux/ramips/ -name "config-*" 2>/dev/null
+          find /tmp/r33-source/target/linux/ramips/ -name "config-*" 2>/dev/null
+        fi
+        
+        # ===== 3. 合并缺失的 NAND 内核配置 =====
+        echo ""
+        echo "===== Step 3: Merge missing NAND kernel configs ====="
+        
+        if [ -f "$R33_KCONF" ] && [ -f "$CUR_KCONF" ]; then
+          # 提取 22.03 中的 NAND 相关配置
+          NAND_CONFIGS=$(grep -E "^CONFIG_.*(NAND|UBI|UBIFS)" "$R33_KCONF" | grep "=y\|=m")
+          
+          echo "NAND configs from 22.03 fork:"
+          echo "$NAND_CONFIGS"
+          
+          # 逐行检查并补充到 23.05
+          while IFS= read -r config_line; do
+            [ -z "$config_line" ] && continue
+            config_key=$(echo "$config_line" | cut -d'=' -f1)
+            if ! grep -q "^${config_key}=" "$CUR_KCONF" 2>/dev/null; then
+              echo "ADDING: $config_line"
+              echo "$config_line" >> "$CUR_KCONF"
+            else
+              existing=$(grep "^${config_key}=" "$CUR_KCONF")
+              if [ "$existing" != "$config_line" ]; then
+                echo "DIFFERS: 22.03 has [$config_line] vs 23.05 has [$existing]"
+              fi
+            fi
+          done <<< "$NAND_CONFIGS"
+          
+          # 确保关键 NAND 配置存在
+          for cfg in \
+            "CONFIG_MTD_NAND=y" \
+            "CONFIG_MTD_NAND_ECC=y" \
+            "CONFIG_MTD_NAND_ECC_SW_HAMMING=y" \
+            "CONFIG_MTD_RAW_NAND=y" \
+            "CONFIG_MTD_NAND_MT7620=y" \
+            "CONFIG_MTD_UBI=y" \
+            "CONFIG_MTD_UBI_WL_THRESHOLD=4096" \
+            "CONFIG_MTD_UBI_BEB_LIMIT=20" \
+            "CONFIG_UBIFS_FS=y" \
+            "CONFIG_UBIFS_FS_ADVANCED_COMPR=y" \
+            "CONFIG_UBIFS_FS_LZO=y" \
+            "CONFIG_UBIFS_FS_ZLIB=y" \
+            "CONFIG_UBIFS_FS_ZSTD=y"; do
+            cfg_key=$(echo "$cfg" | cut -d'=' -f1)
+            if ! grep -q "^${cfg_key}=" "$CUR_KCONF" 2>/dev/null; then
+              echo "FORCE ADDING: $cfg"
+              echo "$cfg" >> "$CUR_KCONF"
+            fi
+          done
+          
+          echo ""
+          echo "--- Final NAND configs in 23.05 ---"
+          grep -i "NAND\|UBI\|UBIFS" "$CUR_KCONF" | sort
         fi
 
-        # 5. 查找并复制 R33 相关的内核补丁（如果有）
-        echo "=== Checking for R33 kernel patches ==="
-        # 22.03 用 patches-5.10，23.05 用 patches-5.15
-        if [ -d "/tmp/r33-source/target/linux/ramips/patches-5.10/" ]; then
-          for patch in $(find /tmp/r33-source/target/linux/ramips/patches-5.10/ -iname "*r33*" -o -iname "*hc5661*" 2>/dev/null); do
-            fname=$(basename "$patch")
-            echo "Copying patch: $fname (may need manual review for 5.15 compatibility)"
-            cp "$patch" target/linux/ramips/patches-5.15/ 2>/dev/null || true
+        # ===== 4. 查找并复制 R33 DTS 文件 =====
+        echo ""
+        echo "===== Step 4: Find and copy R33 DTS files ====="
+        
+        echo "All DTS files in mengzonefire containing hiwifi/r33/hc5661:"
+        find /tmp/r33-source/target/linux/ramips/dts/ -type f \( \
+          -iname "*r33*" -o \
+          -iname "*hc5661*" -o \
+          -iname "*hc5761*" -o \
+          -iname "*hc5861*" -o \
+          -iname "*hiwifi*" \
+        \) | tee /tmp/r33-dts-list.txt
+        
+        echo ""
+        echo "All DTS files in official 23.05 containing hiwifi:"
+        find target/linux/ramips/dts/ -type f -iname "*hiwifi*" 2>/dev/null || echo "None found"
+        
+        # 复制所有 R33 相关 DTS 到 23.05
+        if [ -s /tmp/r33-dts-list.txt ]; then
+          while IFS= read -r dts_file; do
+            if [ -n "$dts_file" ] && [ -f "$dts_file" ]; then
+              fname=$(basename "$dts_file")
+              echo "Copying DTS: $fname"
+              cp "$dts_file" target/linux/ramips/dts/
+              
+              # 显示 DTS 中的 NAND 相关部分
+              echo "  NAND sections in $fname:"
+              grep -n -i "nand\|ubi\|partition\|flash" "$dts_file" | head -20
+            fi
+          done < /tmp/r33-dts-list.txt
+        else
+          echo "WARNING: No R33 DTS files found!"
+          echo "Listing ALL DTS files in mengzonefire mt7620:"
+          ls /tmp/r33-source/target/linux/ramips/dts/*.dts 2>/dev/null | head -30
+        fi
+        
+        # 同时复制可能被引用的 mt7620 公共 dtsi 文件（NAND 定义可能在这里）
+        echo ""
+        echo "Checking for NAND-related dtsi includes:"
+        for dtsi in mt7620a.dtsi mt7620.dtsi mt7620a_nand.dtsi; do
+          src="/tmp/r33-source/target/linux/ramips/dts/$dtsi"
+          dst="target/linux/ramips/dts/$dtsi"
+          if [ -f "$src" ]; then
+            if [ -f "$dst" ]; then
+              echo "  $dtsi exists in both, comparing NAND parts:"
+              diff <(grep -i "nand" "$src") <(grep -i "nand" "$dst") || true
+            else
+              echo "  $dtsi only in 22.03, copying"
+              cp "$src" "$dst"
+            fi
+          fi
+        done
+
+        # ===== 5. 提取并移植 R33 设备定义 =====
+        echo ""
+        echo "===== Step 5: Port R33 device definition from mt7620.mk ====="
+        
+        R33_SRC="/tmp/r33-source/target/linux/ramips/image/mt7620.mk"
+        R33_DST="target/linux/ramips/image/mt7620.mk"
+        
+        echo "--- All hiwifi/r33 entries in mengzonefire mt7620.mk ---"
+        grep -n -i "hiwifi\|r33\|hc5661\|hc5761\|hc5861" "$R33_SRC" 2>/dev/null || echo "None"
+        
+        # 尝试多种可能的设备名称
+        FOUND_DEVICE=""
+        for devname in hiwifi_r33 hiwifi-r33 hiwifi_hc5661 hiwifi_hc5761 hiwifi_hc5861 \
+                       hiwifi_hc5661a hiwifi_hc5661-nand hiwifi_r33-nand; do
+          BLOCK=$(awk -v dev="$devname" '
+            $0 ~ "^define Device/" dev "$" { found=1 }
+            found { print }
+            found && /^TARGET_DEVICES \+= / { exit }
+          ' "$R33_SRC" 2>/dev/null)
+          
+          if [ -n "$BLOCK" ]; then
+            FOUND_DEVICE="$devname"
+            echo ""
+            echo "=== Found device definition: $devname ==="
+            echo "$BLOCK"
+            echo ""
+            
+            # 分析 NAND 特征
+            echo "NAND characteristics:"
+            echo "$BLOCK" | grep -i "BLOCKSIZE\|PAGESIZE\|UBINIZE\|KERNEL_SIZE\|IMAGE_SIZE\|nand\|ubi\|tar" || echo "  (no explicit NAND params found)"
+            
+            # 追加到 23.05 的 mt7620.mk
+            echo "" >> "$R33_DST"
+            echo "# === Hiwifi R33 ($devname) - ported from mengzonefire/22.03-of ===" >> "$R33_DST"
+            echo "# NAND flash device (128MB), requires UBI support" >> "$R33_DST"
+            echo "$BLOCK" >> "$R33_DST"
+            echo "Device definition added to mt7620.mk"
+            break
+          fi
+        done
+        
+        # 如果没找到任何已知设备名，提取所有 hiwifi 相关块
+        if [ -z "$FOUND_DEVICE" ]; then
+          echo ""
+          echo "WARNING: No known device name found. Extracting ALL hiwifi blocks:"
+          awk '/^define Device\/hiwifi/{found=1} found{print} found && /^TARGET_DEVICES \+= /{found=0}' \
+            "$R33_SRC" 2>/dev/null | tee /tmp/all-hiwifi-blocks.txt
+          
+          if [ -s /tmp/all-hiwifi-blocks.txt ]; then
+            echo "" >> "$R33_DST"
+            echo "# === All Hiwifi devices - ported from mengzonefire/22.03-of ===" >> "$R33_DST"
+            cat /tmp/all-hiwifi-blocks.txt >> "$R33_DST"
+          else
+            echo "CRITICAL: No hiwifi device definitions found in mengzonefire fork!"
+            echo ""
+            echo "=== FULL mt7620.mk from mengzonefire (last 100 lines) ==="
+            tail -100 "$R33_SRC"
+          fi
+        fi
+
+        # ===== 6. 对比 NAND image 构建宏 =====
+        echo ""
+        echo "===== Step 6: Compare NAND image build macros ====="
+        
+        echo "--- 22.03 NAND image macros ---"
+        grep -n "nand\|ubi\|tar\|NAND" "$R33_SRC" | head -20
+        echo ""
+        echo "--- 23.05 NAND image macros ---"
+        grep -n "nand\|ubi\|tar\|NAND" "$R33_DST" | head -20
+        
+        # 检查 23.05 是否有通用 NAND image 构建函数
+        echo ""
+        echo "--- 23.05 common NAND support in image/Makefile ---"
+        grep -rn "nand\|ubi\|sysupgrade-tar" target/linux/ramips/image/Makefile 2>/dev/null | head -10 || echo "None"
+        
+        # 检查其他 23.05 mt7620 NAND 设备作为参考
+        echo ""
+        echo "--- Existing NAND devices in 23.05 mt7620.mk (by BLOCKSIZE/PAGESIZE) ---"
+        grep -B5 "BLOCKSIZE\|PAGESIZE\|UBINIZE" "$R33_DST" | head -30 || echo "None"
+
+        # ===== 7. 复制 NAND 相关内核补丁 =====
+        echo ""
+        echo "===== Step 7: Port NAND-related kernel patches ====="
+        
+        # 22.03 的补丁目录
+        PATCH_SRC_DIR="/tmp/r33-source/target/linux/ramips/patches-5.10"
+        PATCH_DST_DIR="target/linux/ramips/patches-5.15"
+        
+        if [ -d "$PATCH_SRC_DIR" ]; then
+          echo "22.03 patches (NAND/MTD related):"
+          grep -rl -i "nand\|mt7620.*nand\|hiwifi\|r33" "$PATCH_SRC_DIR"/ 2>/dev/null | while read pf; do
+            fname=$(basename "$pf")
+            echo "  Found NAND patch: $fname"
+            
+            # 检查 23.05 是否已有同名或相似补丁
+            if [ -f "$PATCH_DST_DIR/$fname" ]; then
+              echo "    -> Already exists in 23.05, comparing..."
+              diff "$pf" "$PATCH_DST_DIR/$fname" > /dev/null 2>&1 && echo "    -> Identical" || echo "    -> DIFFERS"
+            else
+              echo "    -> Not in 23.05, copying (needs 5.15 compat review)"
+              cp "$pf" "$PATCH_DST_DIR/"
+            fi
+          done
+          
+          # 特别查找 MT7620 NAND 控制器驱动补丁
+          echo ""
+          echo "MT7620 NAND controller patches:"
+          for pf in $(find "$PATCH_SRC_DIR" -name "*.patch" | sort); do
+            if grep -q -i "mt7620.*nand\|nand.*mt7620\|ralink.*nand\|nand.*ralink" "$pf" 2>/dev/null; then
+              fname=$(basename "$pf")
+              echo "  NAND driver patch: $fname"
+              if [ ! -f "$PATCH_DST_DIR/$fname" ]; then
+                echo "    -> Copying to 23.05"
+                cp "$pf" "$PATCH_DST_DIR/"
+              fi
+            fi
+          done
+        else
+          echo "No patches-5.10 directory found"
+        fi
+        
+        # 也检查 generic patches
+        GENERIC_PATCH_SRC="/tmp/r33-source/target/linux/generic/patches-5.10"
+        GENERIC_PATCH_DST="target/linux/generic/patches-5.15"
+        if [ -d "$GENERIC_PATCH_SRC" ]; then
+          echo ""
+          echo "Generic NAND patches:"
+          grep -rl -i "mt7620.*nand\|ralink.*nand" "$GENERIC_PATCH_SRC"/ 2>/dev/null | while read pf; do
+            fname=$(basename "$pf")
+            echo "  $fname"
+            if [ ! -f "$GENERIC_PATCH_DST/$fname" ]; then
+              echo "    -> Copying"
+              cp "$pf" "$GENERIC_PATCH_DST/" 2>/dev/null || true
+            fi
           done
         fi
 
-        # 6. 检查是否有自定义文件（如默认配置等）
-        if [ -d "/tmp/r33-source/target/linux/ramips/mt7620/" ]; then
-          echo "=== Copying mt7620 subtarget files ==="
-          # 不要覆盖已有文件，只补充缺失的
-          cp -n /tmp/r33-source/target/linux/ramips/mt7620/* target/linux/ramips/mt7620/ 2>/dev/null || true
+        # ===== 8. 移植 NAND 相关的 subtarget 文件 =====
+        echo ""
+        echo "===== Step 8: Port subtarget NAND config files ====="
+        
+        # 对比 mt7620 subtarget 目录
+        R33_SUBTARGET="/tmp/r33-source/target/linux/ramips/mt7620"
+        CUR_SUBTARGET="target/linux/ramips/mt7620"
+        
+        echo "Files in 22.03 mt7620 subtarget:"
+        ls -la "$R33_SUBTARGET"/ 2>/dev/null
+        echo ""
+        echo "Files in 23.05 mt7620 subtarget:"
+        ls -la "$CUR_SUBTARGET"/ 2>/dev/null
+        
+        # 对比 base-files（可能包含 NAND 升级脚本）
+        if [ -d "/tmp/r33-source/target/linux/ramips/mt7620/base-files" ]; then
+          echo ""
+          echo "22.03 has base-files for mt7620, checking for NAND upgrade scripts:"
+          find /tmp/r33-source/target/linux/ramips/mt7620/base-files -type f | while read bf; do
+            relpath="${bf#/tmp/r33-source/target/linux/ramips/mt7620/base-files}"
+            echo "  $relpath"
+            if grep -q -i "nand\|ubi" "$bf" 2>/dev/null; then
+              echo "    -> Contains NAND/UBI references"
+            fi
+          done
+          
+          # 复制 base-files（不覆盖已有的）
+          cp -rn /tmp/r33-source/target/linux/ramips/mt7620/base-files/* \
+                 "$CUR_SUBTARGET/base-files/" 2>/dev/null || true
+        fi
+        
+        # 检查 platform.sh（NAND 升级函数通常在这里）
+        PLAT_SRC="/tmp/r33-source/target/linux/ramips/mt7620/base-files/lib/upgrade/platform.sh"
+        PLAT_DST="$CUR_SUBTARGET/base-files/lib/upgrade/platform.sh"
+        if [ -f "$PLAT_SRC" ]; then
+          echo ""
+          echo "22.03 platform.sh NAND upgrade functions:"
+          grep -n -i "nand\|ubi\|hiwifi\|r33" "$PLAT_SRC" || echo "  None found"
+          
+          if [ -f "$PLAT_DST" ]; then
+            echo ""
+            echo "23.05 platform.sh NAND upgrade functions:"
+            grep -n -i "nand\|ubi\|hiwifi\|r33" "$PLAT_DST" || echo "  None found"
+            
+            # 如果 23.05 platform.sh 没有 R33 的升级函数，追加
+            if ! grep -q -i "hiwifi.*r33\|r33" "$PLAT_DST" 2>/dev/null; then
+              R33_UPGRADE=$(awk '/hiwifi.*r33|r33/{found=1} found{print} found && /^[[:space:]]*;;/{found=0}' "$PLAT_SRC" 2>/dev/null)
+              if [ -n "$R33_UPGRADE" ]; then
+                echo ""
+                echo "Adding R33 upgrade function to 23.05 platform.sh"
+                echo "$R33_UPGRADE"
+                # 在 platform_do_upgrade 函数的 esac 之前插入
+                sed -i "/^esac$/i\\
+# Hiwifi R33 NAND upgrade\\
+$R33_UPGRADE" "$PLAT_DST" 2>/dev/null || true
+              fi
+            fi
+          else
+            echo "23.05 has no platform.sh, copying from 22.03"
+            mkdir -p "$(dirname "$PLAT_DST")"
+            cp "$PLAT_SRC" "$PLAT_DST"
+          fi
         fi
 
-        # 7. 清理临时文件
-        rm -rf /tmp/r33-source /tmp/r33-dts-list.txt /tmp/r33-device-block.txt
-
-        # 8. 验证
+        # ===== 9. 检查 NAND 相关的 ramips 公共文件 =====
         echo ""
-        echo "========== VERIFICATION =========="
-        echo "--- R33 DTS files ---"
-        ls -la target/linux/ramips/dts/*r33* target/linux/ramips/dts/*hc5661* 2>/dev/null || echo "WARNING: No R33/HC5661 DTS files found!"
-        echo "--- R33 in image Makefile ---"
-        grep -c "hiwifi_r33\|hiwifi-r33" target/linux/ramips/image/mt7620.mk && echo "R33 device found in image Makefile" || echo "WARNING: R33 NOT in image Makefile!"
+        echo "===== Step 9: Check ramips common NAND files ====="
+        
+        # 检查 ramips 通用的 NAND 升级脚本
+        for f in \
+          "target/linux/ramips/base-files/lib/upgrade/platform.sh" \
+          "target/linux/ramips/base-files/etc/board.d/01_leds" \
+          "target/linux/ramips/base-files/etc/board.d/02_network"; do
+          
+          src="/tmp/r33-source/$f"
+          dst="$f"
+          if [ -f "$src" ]; then
+            echo ""
+            echo "File: $f"
+            echo "  22.03 hiwifi/r33 entries:"
+            grep -n -i "hiwifi\|r33" "$src" | head -10 || echo "  None"
+            
+            if [ -f "$dst" ]; then
+              echo "  23.05 hiwifi/r33 entries:"
+              grep -n -i "hiwifi\|r33" "$dst" | head -10 || echo "  None"
+              
+              # 如果 23.05 缺少 R33 条目，提取并追加
+              if ! grep -q -i "hiwifi.*r33\|hiwifi,r33" "$dst" 2>/dev/null; then
+                R33_ENTRIES=$(grep -i "hiwifi.*r33\|hiwifi,r33\|hiwifi_r33" "$src" 2>/dev/null)
+                if [ -n "$R33_ENTRIES" ]; then
+                  echo "  -> Adding R33 entries to 23.05"
+                  echo "$R33_ENTRIES"
+                fi
+              fi
+            fi
+          fi
+        done
+
+        # ===== 10. 清理并验证 =====
+        echo ""
+        echo "===== Step 10: Final verification ====="
+        
+        rm -rf /tmp/r33-source /tmp/r33-dts-list.txt /tmp/r33-device-block.txt /tmp/all-hiwifi-blocks.txt
+        
+        echo ""
+        echo "========== FINAL VERIFICATION =========="
+        echo ""
+        echo "--- R33 DTS files in 23.05 ---"
+        find target/linux/ramips/dts/ -type f \( -iname "*r33*" -o -iname "*hc5661*" -o -iname "*hiwifi*" \) 2>/dev/null || echo "NONE FOUND"
+        echo ""
+        echo "--- R33 in image mt7620.mk ---"
+        grep -c -i "hiwifi_r33\|hiwifi-r33\|hiwifi,r33" target/linux/ramips/image/mt7620.mk 2>/dev/null && \
+          echo "R33 device found" || echo "WARNING: R33 NOT found"
+        echo ""
         echo "--- R33 device definition ---"
-        grep -A 15 "Device/hiwifi_r33\|Device/hiwifi-r33" target/linux/ramips/image/mt7620.mk || echo "No definition block found"
-        echo "========== END VERIFICATION =========="
+        grep -A 20 "Device/hiwifi" target/linux/ramips/image/mt7620.mk || echo "No hiwifi device blocks"
+        echo ""
+        echo "--- NAND kernel configs ---"
+        grep -i "NAND\|UBI\|UBIFS" "$CUR_KCONF" | sort
+        echo ""
+        echo "--- NAND patches in 23.05 ---"
+        grep -rl -i "nand.*mt7620\|mt7620.*nand" target/linux/ramips/patches-5.15/ 2>/dev/null || echo "None"
+        echo ""
+        echo "========== PORTING COMPLETE =========="
 
     - name: Cache
       uses: klever1988/cachewrtbuild@main
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
-
-    - name: Load custom feeds
+            - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
@@ -214,6 +525,7 @@ jobs:
         echo "=== New Go version ==="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -3
 
+        # 强制清除缓存中的旧版 Go 编译产物
         echo "=== Cleaning cached Go build artifacts ==="
         rm -rf build_dir/hostpkg/go-*
         rm -rf build_dir/host/go-*
@@ -242,9 +554,18 @@ jobs:
         ./scripts/feeds install -a 2>&1 || true
         ./scripts/feeds install -a -f 2>&1 || true
 
-    - name: Verify critical packages
+    - name: Verify critical packages and R33 support
       run: |
         cd openwrt
+        echo "========== R33 Device Support Check =========="
+        echo "--- DTS files ---"
+        find target/linux/ramips/dts/ -type f \( -iname "*r33*" -o -iname "*hc5661*" -o -iname "*hiwifi*" \) 2>/dev/null || echo "NONE"
+        echo "--- Image definition ---"
+        grep -c -i "hiwifi_r33\|hiwifi-r33" target/linux/ramips/image/mt7620.mk 2>/dev/null || echo "0"
+        echo "--- NAND kernel support ---"
+        KCONF=$(find target/linux/ramips/ -name "config-*" -path "*/mt7620/*" 2>/dev/null | head -1)
+        [ -n "$KCONF" ] && grep -c "MTD_NAND\|MTD_UBI\|UBIFS" "$KCONF" || echo "0"
+        echo ""
         echo "========== Critical packages check =========="
         for pkg in luci-app-passwall2 xray-core hysteria chinadns-ng dns2socks ipt2socks microsocks shadowsocks-libev trojan-plus simple-obfs; do
           found=$(find package feeds -name "Makefile" -path "*/$pkg/*" 2>/dev/null | head -1)
@@ -259,8 +580,6 @@ jobs:
         done
         echo "========== Go toolchain =========="
         grep 'PKG_VERSION' feeds/packages/lang/golang/golang/Makefile | head -1
-        echo "========== R33 device check =========="
-        grep "hiwifi_r33\|hiwifi-r33" target/linux/ramips/image/mt7620.mk | head -5 || echo "WARNING: R33 not in image!"
 
     - name: Load custom configuration
       run: |
@@ -283,14 +602,18 @@ jobs:
         cd openwrt
         echo -e 'CONFIG_DEVEL=y\nCONFIG_CCACHE=y' >> .config
         make defconfig
-        echo "=== Device check ==="
-        grep 'hiwifi_r33\|DEVICE_hiwifi' .config || echo "WARNING: R33 NOT in final config!"
-        echo "=== MULTI_PROFILE check ==="
-        grep 'MULTI_PROFILE' .config || echo "No MULTI_PROFILE setting"
-        echo "=== Passwall2 config ==="
-        grep -i 'passwall' .config | head -5 || echo "No passwall config"
+        echo "=== R33 Device in final config ==="
+        grep -i 'hiwifi_r33\|DEVICE_hiwifi' .config || echo "WARNING: R33 NOT in config!"
+        echo "=== MULTI_PROFILE ==="
+        grep 'MULTI_PROFILE' .config || echo "No MULTI_PROFILE"
+        echo "=== TARGET_PROFILE ==="
+        grep 'TARGET_PROFILE' .config || echo "No TARGET_PROFILE"
+        echo "=== NAND support ==="
+        grep -i 'NAND\|UBI\|UBIFS' .config | head -10 || echo "No NAND config"
+        echo "=== Passwall2 ==="
+        grep -i 'passwall' .config | head -5 || echo "No passwall"
         echo "=== dnsmasq nftset ==="
-        grep -i 'nftset' .config || echo "No nftset config"
+        grep -i 'nftset' .config || echo "No nftset"
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -301,13 +624,25 @@ jobs:
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) 2>&1 | tee /workdir/build.log || true
+
+        # 检查 R33 固件（NAND 设备可能生成 sysupgrade.bin 或 sysupgrade.tar）
+        echo "=== Checking for R33 firmware output ==="
+        ls -lh bin/targets/ramips/mt7620/*hiwifi*r33* 2>/dev/null || echo "No R33-specific files found"
+        ls -lh bin/targets/ramips/mt7620/*r33* 2>/dev/null || echo "No r33 files found"
+        ls -lh bin/targets/ramips/mt7620/*sysupgrade* 2>/dev/null || echo "No sysupgrade files found"
+
+        # R33 NAND 固件可能是 .tar 而不是 .bin
         if ls bin/targets/ramips/mt7620/*hiwifi*r33*sysupgrade* 1>/dev/null 2>&1; then
           echo "status=success" >> $GITHUB_OUTPUT
           echo "R33 Firmware built successfully!"
           ls -lh bin/targets/ramips/mt7620/*hiwifi*r33*
+        elif ls bin/targets/ramips/mt7620/*r33*sysupgrade* 1>/dev/null 2>&1; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "R33 Firmware found with alternate name!"
+          ls -lh bin/targets/ramips/mt7620/*r33*
         elif ls bin/targets/ramips/mt7620/*sysupgrade* 1>/dev/null 2>&1; then
           echo "status=success" >> $GITHUB_OUTPUT
-          echo "Firmware built (checking for R33):"
+          echo "Sysupgrade firmware found (may include R33):"
           ls -lh bin/targets/ramips/mt7620/*sysupgrade*
         else
           echo "First attempt failed, retrying single thread..."
@@ -316,10 +651,14 @@ jobs:
             echo "status=success" >> $GITHUB_OUTPUT
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "=== What files exist in target dir ==="
-            ls -lhR bin/targets/ramips/mt7620/ 2>/dev/null || echo "No target dir"
-            echo "=== R33 related build artifacts ==="
+            echo "=== All files in target dir ==="
+            ls -lhR bin/targets/ramips/mt7620/ 2>/dev/null || echo "No target dir at all"
+            echo "=== R33 build artifacts ==="
             find build_dir/ -iname "*r33*" -o -iname "*hiwifi*" 2>/dev/null | head -20
+            echo "=== NAND/UBI errors ==="
+            grep -i "nand\|ubi\|ubinize\|hiwifi\|r33" /workdir/build_v.log | tail -30 || true
+            echo "=== fwtool errors ==="
+            grep -i "fwtool\|Failed to open" /workdir/build_v.log | tail -10 || true
             echo "=== Last 200 lines ==="
             tail -200 /workdir/build_v.log
             exit 1
@@ -335,14 +674,20 @@ jobs:
         cd openwrt
         echo "========== Built package versions =========="
         echo "--- Xray-core ---"
-        find bin/ -name "xray-core*.ipk" 2>/dev/null | head -1
+        XRAY_IPK=$(find bin/ -name "xray-core*.ipk" 2>/dev/null | head -1)
+        if [ -n "$XRAY_IPK" ]; then
+          echo "OK: $XRAY_IPK"
+        else
+          echo "WARNING: xray-core IPK not found!"
+        fi
         echo "--- Hysteria ---"
-        find bin/ -name "hysteria*.ipk" 2>/dev/null | head -1
+        find bin/ -name "hysteria*.ipk" 2>/dev/null | head -1 || echo "Not found"
         echo "--- PassWall2 ---"
-        find bin/ -name "luci-app-passwall2*.ipk" 2>/dev/null | head -1
-        echo "--- Firmware files ---"
-        ls -lh bin/targets/ramips/mt7620/*r33* 2>/dev/null || echo "No R33-specific files"
-        ls -lh bin/targets/ramips/mt7620/*sysupgrade* 2>/dev/null || echo "No sysupgrade files"
+        find bin/ -name "luci-app-passwall2*.ipk" 2>/dev/null | head -1 || echo "Not found"
+        echo "--- R33 Firmware ---"
+        find bin/targets/ -name "*r33*" -o -name "*hiwifi*" 2>/dev/null || echo "No R33 files"
+        echo "--- All sysupgrade files ---"
+        find bin/targets/ -name "*sysupgrade*" 2>/dev/null || echo "None"
 
     - name: Upload build log on failure
       if: failure()
@@ -386,8 +731,8 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "Hiwifi R33 OpenWrt 23.05 Firmware" >> release.txt
-        echo "Platform: ramips/mt7620 MT7620A 128MB NAND" >> release.txt
+        echo "Hiwifi R33 OpenWrt 23.05 Firmware (NAND)" >> release.txt
+        echo "Platform: ramips/mt7620 MT7620A 128MB NAND Flash" >> release.txt
         echo "Includes: LuCI Chinese + PassWall2 26.x + Xray 24.x + Hysteria2" >> release.txt
         echo "Default IP: 192.168.10.1" >> release.txt
         echo "Default password: none" >> release.txt
