@@ -1,7 +1,6 @@
 #!/bin/bash
 #
 # diy-part2.sh - After Update feeds
-# 适配 OpenWrt 23.05
 #
 
 # === 1. 修改默认 IP ===
@@ -16,21 +15,16 @@ if [ -n "$PW2_MK" ]; then
 fi
 
 # === 3. 配置预编译包仓库作为后备 ===
-# 万一编译出的 xray-core 版本不对，可 SSH 进路由器用 opkg 安装正确版本
 mkdir -p files/etc/opkg
 cat > files/etc/opkg/passwall-fallback.conf << 'OPKGEOF'
-# PassWall2 预编译包后备仓库 (mipsel_24kc, OpenWrt 23.05)
-# 默认注释掉，需要时取消注释，然后执行:
-#   opkg update
-#   opkg install xray-core --force-reinstall
-#   opkg install hysteria --force-reinstall
+# PassWall2 预编译包后备仓库 (mipsel_24kc)
+# 需要时取消注释，然后: opkg update && opkg install xray-core --force-reinstall
 # src/gz passwall_packages https://sourceforge.net/projects/openwrt-passwall-build/files/releases/packages-23.05/mipsel_24kc/passwall_packages
 OPKGEOF
 
 echo "=== Fallback opkg feed configured ==="
-cat files/etc/opkg/passwall-fallback.conf
 
-# === 4. 验证关键包源码版本 ===
+# === 4. 验证关键包版本 ===
 echo "=== Xray-core source version ==="
 XRAY_MK=$(find feeds -name "Makefile" -path "*/xray-core/*" 2>/dev/null | head -1)
 if [ -n "$XRAY_MK" ]; then
