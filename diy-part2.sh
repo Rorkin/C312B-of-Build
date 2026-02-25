@@ -3,18 +3,27 @@
 # 1. 修改默认管理 IP
 sed -i 's/192.168.1.1/192.168.10.1/g' package/base-files/files/bin/config_generate
 
-# 2. 注入硬件适配 DTS
+# 2. 注入硬件 DTS 补丁
 if [ -d "$GITHUB_WORKSPACE/custom_files" ]; then
     cp -f $GITHUB_WORKSPACE/custom_files/mt7620a_hiwifi_hc5861b.dts target/linux/ramips/dts/mt7620a_hiwifi_hc5861b.dts
 fi
 
-# 3. 强制修正 Makefile：添加驱动并确保生成 factory.bin 和 sysupgrade.bin
-DEVICE_MAKEFILE="target/linux/ramips/image/mt7620.mk"
-if [ -f "$DEVICE_MAKEFILE" ]; then
-    # 注入驱动包
-    sed -i '/DEVICE_TITLE := HiWiFi HC5861B/,/IMAGE_SIZE/ s/DEVICE_PACKAGES := .*/DEVICE_PACKAGES := kmod-mt76x2 kmod-usb2 kmod-usb-ohci kmod-ledtrig-usbport kmod-switch-rtl8367b/' $DEVICE_MAKEFILE
-    
-    # 确保生成的镜像类型包含 factory 和 sysupgrade
-    # 针对 23.05 的语法调整，确保两者都生成
-    sed -i '/define Device\/hiwifi_hc5861b/,/endef/ s/IMAGES := .*/IMAGES := squashfs-factory.bin squashfs-sysupgrade.bin/' $DEVICE_MAKEFILE
-fi
+# 3. 重写 Makefile 以支持 Factory 镜像并注入驱动
+MT7620_MAKEFILE="target/linux/ramips/image/mt7620.mk"
+# 删除原有设备定义
+sed -i '/define Device\/hiwifi_hc5861b/,/endef/d' $MT7620_MAKEFILE
+
+# 追加新的适配定义
+cat <<EOF >> $MT7620_MAKEFILE
+
+define Device/hiwifi_hc5861b
+  \$(Device/gdma-nand)
+  DEVICE_VENDOR := HiWiFi
+  DEVICE_MODEL := HC5861B (R33)
+  DEVICE_PACKAGES := kmod-mt76x2 kmod-usb2 kmod-usb-ohci kmod-ledtrig-usbport kmod-switch-rtl8367b
+  IMAGES := squashfs-factory.bin squashfs-sysupgrade.bin
+  IMAGE/squashfs-factory.bin := append-kernel | pad-to \$\$(BLOCKSIZE) | append-ubi
+  IMAGE/squashfs-sysupgrade.bin := sysupgrade-tar | append-metadata
+endef
+TARGET_DEVICES += hiwifi_hc5861b
+EOF
