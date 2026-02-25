@@ -1,23 +1,20 @@
 #!/bin/bash
 
-# 1. 修改默认管理 IP 为 192.168.10.1
+# 1. 修改默认管理 IP
 sed -i 's/192.168.1.1/192.168.10.1/g' package/base-files/files/bin/config_generate
 
-# 2. 注入硬件适配 DTS 文件
-# 将 custom_files 目录下的 DTS 复制到源码对应位置，替换官方通用文件
+# 2. 注入硬件适配 DTS
 if [ -d "$GITHUB_WORKSPACE/custom_files" ]; then
     cp -f $GITHUB_WORKSPACE/custom_files/mt7620a_hiwifi_hc5861b.dts target/linux/ramips/dts/mt7620a_hiwifi_hc5861b.dts
-    echo "DTS 硬件补丁注入成功！"
 fi
 
-# 3. 修正设备 Makefile，确保包含 RTL8367RB 交换机驱动和必要的内核模块
-# 23.05 编译时需要明确定义该设备的包依赖，否则 LAN 口可能无法识别
+# 3. 强制修正 Makefile：添加驱动并确保生成 factory.bin 和 sysupgrade.bin
 DEVICE_MAKEFILE="target/linux/ramips/image/mt7620.mk"
 if [ -f "$DEVICE_MAKEFILE" ]; then
-    # 确保 hiwifi_hc5861b 设备条目中包含 kmod-switch-rtl8367b
+    # 注入驱动包
     sed -i '/DEVICE_TITLE := HiWiFi HC5861B/,/IMAGE_SIZE/ s/DEVICE_PACKAGES := .*/DEVICE_PACKAGES := kmod-mt76x2 kmod-usb2 kmod-usb-ohci kmod-ledtrig-usbport kmod-switch-rtl8367b/' $DEVICE_MAKEFILE
-    echo "Makefile 驱动依赖修正完成！"
+    
+    # 确保生成的镜像类型包含 factory 和 sysupgrade
+    # 针对 23.05 的语法调整，确保两者都生成
+    sed -i '/define Device\/hiwifi_hc5861b/,/endef/ s/IMAGES := .*/IMAGES := squashfs-factory.bin squashfs-sysupgrade.bin/' $DEVICE_MAKEFILE
 fi
-
-# 4. 修改 banner 显示自定义信息（可选）
-sed -i "s/OpenWrt /C312B-Pure-Build /g" package/base-files/files/etc/banner
