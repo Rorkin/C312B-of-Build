@@ -8,18 +8,18 @@ if [ -d "$GITHUB_WORKSPACE/custom_files" ]; then
     cp -f $GITHUB_WORKSPACE/custom_files/mt7620a_hiwifi_hc5861b.dts target/linux/ramips/dts/mt7620a_hiwifi_hc5861b.dts
 fi
 
-# 3. 重写 Makefile 以支持 Factory 镜像并注入驱动
+# 3. 重写 Makefile，增加兼容 ID (SUPPORTED_DEVICES)
 MT7620_MAKEFILE="target/linux/ramips/image/mt7620.mk"
-# 删除原有设备定义
 sed -i '/define Device\/hiwifi_hc5861b/,/endef/d' $MT7620_MAKEFILE
 
-# 追加新的适配定义
 cat <<EOF >> $MT7620_MAKEFILE
 
 define Device/hiwifi_hc5861b
   \$(Device/gdma-nand)
   DEVICE_VENDOR := HiWiFi
   DEVICE_MODEL := HC5861B (R33)
+  # 关键点：添加这一行，让 22.03 的系统能识别并允许升级
+  SUPPORTED_DEVICES := hiwifi,hc5861b hiwifi,r33 hiwifi_hc5861b
   DEVICE_PACKAGES := kmod-mt76x2 kmod-usb2 kmod-usb-ohci kmod-ledtrig-usbport kmod-switch-rtl8367b
   IMAGES := squashfs-factory.bin squashfs-sysupgrade.bin
   IMAGE/squashfs-factory.bin := append-kernel | pad-to \$\$(BLOCKSIZE) | append-ubi
