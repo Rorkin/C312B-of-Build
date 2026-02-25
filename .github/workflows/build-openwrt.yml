@@ -32,7 +32,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Initialization environment
       env:
@@ -64,7 +64,7 @@ jobs:
     - name: Update feeds
       run: |
         cd openwrt
-        # 增加重试机制应对官方服务器不稳定（503错误）
+        # 增加重试机制应对官方服务器不稳定
         (./scripts/feeds update -a) || (sleep 30 && ./scripts/feeds update -a) || (sleep 60 && ./scripts/feeds update -a)
 
     - name: Install feeds
@@ -92,7 +92,6 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 优先多线程编译，失败则切换单线程输出详细日志
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
@@ -108,16 +107,14 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/ramips/mt7620
-        # 创建一个临时目录仅存放需要的固件
         mkdir -p release_assets
-        # 筛选 factory 和 sysupgrade 固件
         cp *squashfs-factory.bin release_assets/ 2>/dev/null || true
         cp *squashfs-sysupgrade.bin release_assets/ 2>/dev/null || true
         echo "FIRMWARE=$PWD/release_assets" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware directory
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -132,7 +129,7 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
