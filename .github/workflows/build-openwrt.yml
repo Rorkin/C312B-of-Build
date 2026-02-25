@@ -91,11 +91,22 @@ jobs:
 
     - name: Organize files
       id: organize
-      if: steps.compile.outputs.status == 'success' && !cancelled()
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/ramips/mt7620
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        # 创建一个纯净的输出目录
+        mkdir -p release_assets
+        
+        # 只移动符合要求的两个 bin 文件到输出目录
+        cp *squashfs-factory.bin release_assets/ 2>/dev/null || true
+        cp *squashfs-sysupgrade.bin release_assets/ 2>/dev/null || true
+        
+        # 检查是否生成成功（打印一下文件列表，方便在 Actions 日志里查看）
+        echo "Final firmware files:"
+        ls -lh release_assets/
+        
+        # 设置环境变量，让下一步的 Release 插件只上传这个目录里的内容
+        echo "FIRMWARE=$PWD/release_assets" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware directory
