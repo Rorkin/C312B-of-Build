@@ -11,3 +11,4 @@ cp -f $GITHUB_WORKSPACE/custom_files/mt7620a_hiwifi_hc5861b.dts target/linux/ram
 # 极路由 3 Pro 在 23.05 官方源码中对应的 ID 就是 hiwifi_hc5861b，所以直接覆盖即可。
 
 echo "硬件适配补丁已成功注入！"
+sed -i '/DEVICE_PACKAGES :=/ s/$/ kmod-switch-rtl8367b/' target/linux/ramips/image/mt7620.mk
