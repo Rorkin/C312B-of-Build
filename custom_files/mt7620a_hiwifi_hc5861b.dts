@@ -7,7 +7,7 @@
 
 / {
 	compatible = "hiwifi,hc5861b", "mediatek,mt7620a-soc";
-	model = "HiWiFi HC5861B";
+	model = "HiWiFi HC5861B (C312B)";
 
 	aliases {
 		led-boot = &led_system;
@@ -95,12 +95,6 @@
 		status = "okay";
 		mediatek,fixed-link = <1000 1 1 1>;
 		phy-mode = "rgmii";
-
-		fixed-link {
-			speed = <1000>;
-			full-duplex;
-			pause;
-		};
 	};
 };
 
