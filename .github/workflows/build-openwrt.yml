@@ -137,7 +137,15 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        # Only keep hiwifi_r33 firmware files
+        mkdir -p /tmp/firmware
+        cp -f *hiwifi_r33* /tmp/firmware/ 2>/dev/null || true
+        cp -f config.buildinfo /tmp/firmware/ 2>/dev/null || true
+        cp -f sha256sums /tmp/firmware/ 2>/dev/null || true
+        # List what we have
+        echo "=== Firmware files for HiWiFi R33 ==="
+        ls -la /tmp/firmware/
+        echo "FIRMWARE=/tmp/firmware" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware directory
