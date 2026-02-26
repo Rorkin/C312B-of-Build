@@ -108,6 +108,74 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
+    - name: Prepare kernel and inject NAND driver
+      run: |
+        cd openwrt
+        # Step 1: 准备内核源码（解压、打patch、复制files/）
+        make target/linux/prepare V=s 2>&1 | tail -50
+        
+        # Step 2: 找到内核源码目录
+        KCONFIG_FILE=$(find build_dir -path "*/linux-5.15.*/drivers/mtd/maps/Kconfig" | head -1)
+        MAKEFILE_FILE=$(find build_dir -path "*/linux-5.15.*/drivers/mtd/maps/Makefile" | head -1)
+        NAND_SOURCE=$(find build_dir -path "*/linux-5.15.*/drivers/mtd/maps/ralink_nand.c" | head -1)
+        
+        echo "=== NAND Driver Integration ==="
+        echo "Kconfig:  $KCONFIG_FILE"
+        echo "Makefile: $MAKEFILE_FILE"
+        echo "Source:   $NAND_SOURCE"
+        
+        # Step 3: 验证源文件已通过files/机制复制
+        if [ -z "$NAND_SOURCE" ]; then
+            echo "ERROR: ralink_nand.c not found in kernel tree!"
+            exit 1
+        fi
+        echo ">>> ralink_nand.c found OK"
+        
+        # Step 4: 注入Kconfig条目
+        if [ -n "$KCONFIG_FILE" ]; then
+            if ! grep -q "MTD_NAND_MT7620" "$KCONFIG_FILE"; then
+                # 在 endmenu 之前插入新配置项
+                sed -i '/^endmenu$/i\config MTD_NAND_MT7620\n\ttristate "Support for NAND on Mediatek MT7620"\n\tdepends on RALINK \&\& SOC_MT7620\n' "$KCONFIG_FILE"
+                echo ">>> Kconfig entry injected"
+            else
+                echo ">>> Kconfig entry already exists"
+            fi
+            # 验证
+            echo "--- Kconfig tail ---"
+            tail -10 "$KCONFIG_FILE"
+        else
+            echo "ERROR: Kconfig not found!"
+            exit 1
+        fi
+        
+        # Step 5: 注入Makefile条目
+        if [ -n "$MAKEFILE_FILE" ]; then
+            if ! grep -q "MTD_NAND_MT7620" "$MAKEFILE_FILE"; then
+                printf 'obj-$(CONFIG_MTD_NAND_MT7620)\t+= ralink_nand.o\n' >> "$MAKEFILE_FILE"
+                echo ">>> Makefile entry injected"
+            else
+                echo ">>> Makefile entry already exists"
+            fi
+            # 验证
+            echo "--- Makefile tail ---"
+            tail -5 "$MAKEFILE_FILE"
+        else
+            echo "ERROR: Makefile not found!"
+            exit 1
+        fi
+        
+        # Step 6: 强制内核重新配置（使新Kconfig条目生效）
+        LINUX_DIR=$(dirname "$KCONFIG_FILE")
+        LINUX_DIR=$(dirname "$LINUX_DIR")
+        LINUX_DIR=$(dirname "$LINUX_DIR")
+        LINUX_DIR=$(dirname "$LINUX_DIR")
+        LINUX_DIR=$(dirname "$LINUX_DIR")
+        echo "Linux dir: $LINUX_DIR"
+        rm -f "$LINUX_DIR/.configured"
+        echo ">>> Kernel will be re-configured to pick up MTD_NAND_MT7620"
+        
+        echo "=== NAND Driver Integration Complete ==="
+
     - name: Compile the firmware
       id: compile
       run: |
