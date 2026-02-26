@@ -1,0 +1,24 @@
+From: Chen Minqiang <ptpt52@gmail.com>
+Date: Thu, 3 Sep 2020 03:27:48 +0800
+Subject: [PATCH] mtd: ralink: add mt7620-nand Kconfig and Makefile entries
+
+Add build system support for the MT7620 NAND controller driver.
+Source files (ralink_nand.c/h) are provided via the files/ mechanism.
+
+--- a/drivers/mtd/maps/Kconfig
++++ b/drivers/mtd/maps/Kconfig
+@@ -330,3 +330,7 @@ config MTD_LANTIQ
+ 	  Support for NOR flash attached to the Lantiq SoC's External Bus Unit.
+ 
++config MTD_NAND_MT7620
++	tristate "Support for NAND on Mediatek MT7620"
++	depends on RALINK && SOC_MT7620
++
+ endmenu
+--- a/drivers/mtd/maps/Makefile
++++ b/drivers/mtd/maps/Makefile
+@@ -44,3 +44,4 @@ obj-$(CONFIG_MTD_INTEL_VR_NOR)	+= intel_
+ obj-$(CONFIG_MTD_RBTX4939)	+= rbtx4939-flash.o
+ obj-$(CONFIG_MTD_VMU)		+= vmu-flash.o
+ obj-$(CONFIG_MTD_LANTIQ)	+= lantiq-flash.o
++obj-$(CONFIG_MTD_NAND_MT7620)	+= ralink_nand.o
