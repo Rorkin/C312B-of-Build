@@ -205,34 +205,11 @@ mkdir -p target/linux/ramips/patches-5.15
 cp "$DEVICE_DIR/patches/0038-mtd-ralink-add-mt7620-nand-kconfig.patch" \
    target/linux/ramips/patches-5.15/
 
-# 10c. Fallback: 如果patch失败，创建一个post-patch修复脚本
-#      OpenWrt在应用patches后会执行 target/linux/ramips/hack-5.15/ 中的hack patches
-#      我们创建一个fallback patch用sed方式
-cat > target/linux/ramips/patches-5.15/9999-mtd-nand-mt7620-fallback.patch << 'FALLBACK_PATCH'
---- /dev/null
-+++ /dev/null
-FALLBACK_PATCH
+# 10c. 清理可能存在的旧垃圾文件
+rm -f target/linux/ramips/patches-5.15/9999-mtd-nand-mt7620-fallback.patch
+rm -f target/linux/ramips/hack-5.15/999-fix-nand-kconfig.patch
 
-# 10d. 创建一个Makefile hook：在内核prepare完成后验证并修复
-mkdir -p target/linux/ramips/hack-5.15
-cat > target/linux/ramips/hack-5.15/999-fix-nand-kconfig.patch << 'HACK_EOF'
---- a/drivers/mtd/maps/Kconfig
-+++ b/drivers/mtd/maps/Kconfig
-@@ -326,2 +326,6 @@
- 	  Support for NOR flash attached to the Lantiq SoC's External Bus Unit.
- 
-+config MTD_NAND_MT7620
-+	tristate "Support for NAND on Mediatek MT7620"
-+	depends on RALINK && SOC_MT7620
-+
- endmenu
---- a/drivers/mtd/maps/Makefile
-+++ b/drivers/mtd/maps/Makefile
-@@ -46,3 +46,4 @@
- obj-$(CONFIG_MTD_RBTX4939)	+= rbtx4939-flash.o
- obj-$(CONFIG_MTD_VMU)		+= vmu-flash.o
- obj-$(CONFIG_MTD_LANTIQ)	+= lantiq-flash.o
-+obj-$(CONFIG_MTD_NAND_MT7620)	+= ralink_nand.o
-HACK_EOF
-
-echo "    NAND driver installed (source + patches + hack fallback)"
+echo "    NAND driver installed"
+echo "      - files/drivers/mtd/maps/ralink_nand.c"
+echo "      - files/drivers/mtd/maps/ralink_nand.h"  
+echo "      - patches-5.15/0038-mtd-ralink-add-mt7620-nand-kconfig.patch"
