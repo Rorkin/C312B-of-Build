@@ -38,7 +38,25 @@
 	};
 };
 
-/* 核心修复：直接在总线下定义 NAND 节点 */
+/* 1. 手动补全缺失的 Pinctrl 定义 */
+&pinctrl {
+	state_default: pinctrl0 {
+		gpio {
+			groups = "i2c", "uartf", "rgmii1", "rgmii2", "wled";
+			function = "gpio";
+		};
+	};
+
+	/* 定义 NAND 专用引脚标签 */
+	nand_pins: nand_pins {
+		nand {
+			groups = "nd_sd";
+			function = "nand";
+		};
+	};
+};
+
+/* 2. 在 palmbus 下直接定义 NAND 控制器 */
 &palmbus {
 	nandc@0 {
 		compatible = "mediatek,mt7620-nand";
@@ -46,7 +64,7 @@
 		status = "okay";
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&nd_sd_pins>;
+		pinctrl-0 = <&nand_pins>; /* 使用上面定义的标签 */
 
 		nand-chip@0 {
 			reg = <0>;
@@ -81,13 +99,6 @@
 				};
 			};
 		};
-	};
-};
-
-&state_default {
-	gpio {
-		groups = "i2c", "uartf", "rgmii1", "rgmii2", "wled", "nd_sd";
-		function = "gpio";
 	};
 };
 
