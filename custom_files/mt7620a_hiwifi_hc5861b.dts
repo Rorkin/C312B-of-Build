@@ -21,6 +21,20 @@
 			label = "blue:system";
 			gpios = <&gpio0 11 GPIO_ACTIVE_LOW>;
 		};
+
+		internet {
+			label = "blue:internet";
+			gpios = <&gpio2 15 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	keys {
+		compatible = "gpio-keys";
+		reset {
+			label = "reset";
+			gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
 	};
 };
 
@@ -31,42 +45,47 @@
 	};
 };
 
-// 关键部分：极路由 3 Pro 的 NAND 挂载
 &gdma {
 	status = "okay";
 };
 
-&nand {
+/* 关键修复：将 &nand 修改为 &nandc */
+&nandc {
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&nd_sd_pins>;
 
-	partitions {
-		compatible = "fixed-partitions";
-		#address-cells = <1>;
-		#size-cells = <1>;
+	nand-chip@0 {
+		reg = <0>;
+		label = "mtk-nand";
 
-		partition@0 {
-			label = "u-boot";
-			reg = <0x0 0x30000>;
-			read-only;
-		};
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
 
-		partition@30000 {
-			label = "u-boot-env";
-			reg = <0x30000 0x10000>;
-			read-only;
-		};
+			partition@0 {
+				label = "u-boot";
+				reg = <0x0 0x30000>;
+				read-only;
+			};
 
-		factory: partition@40000 {
-			label = "factory";
-			reg = <0x40000 0x10000>;
-			read-only;
-		};
+			partition@30000 {
+				label = "u-boot-env";
+				reg = <0x30000 0x10000>;
+				read-only;
+			};
 
-		partition@50000 {
-			label = "firmware";
-			reg = <0x50000 0x7fb0000>; // 修正分区长度
+			factory: partition@40000 {
+				label = "factory";
+				reg = <0x40000 0x10000>;
+				read-only;
+			};
+
+			partition@50000 {
+				label = "firmware";
+				reg = <0x50000 0x7fb0000>;
+			};
 		};
 	};
 };
