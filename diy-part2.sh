@@ -1,22 +1,23 @@
 #!/bin/bash
 
-# 1. 修改默认管理 IP
+# 1. 修改 IP
 sed -i 's/192.168.1.1/192.168.10.1/g' package/base-files/files/bin/config_generate
 
-# 2. 注入硬件 DTS 补丁
+# 2. 注入 DTS
 if [ -d "$GITHUB_WORKSPACE/custom_files" ]; then
     cp -f $GITHUB_WORKSPACE/custom_files/mt7620a_hiwifi_hc5861b.dts target/linux/ramips/dts/mt7620a_hiwifi_hc5861b.dts
 fi
 
-# 3. 【核心修复】拉取 MT7620 NAND 内核补丁 (适配 23.05 / Kernel 5.15)
-# 这一步是为了解决“不停重启”，如果没有内核驱动，系统永远认不到闪存
-PATCH_URL="https://raw.githubusercontent.com/mengzonefire/22.03-of/openwrt-22.03/target/linux/ramips/patches-5.10/0038-mtd-ralink-add-support-for-MT7620-NAND-flash.patch"
-curl -sfL $PATCH_URL -o target/linux/ramips/patches-5.15/0038-mtd-ralink-add-support-for-MT7620-NAND-flash.patch
+# 3. 强制开启内核驱动支持 (解决不停重启的关键)
+# 下载针对 5.15 内核的 Ralink NAND 驱动补丁
+PATCH_FOLDER="target/linux/ramips/patches-5.15"
+mkdir -p $PATCH_FOLDER
+curl -sfL "https://raw.githubusercontent.com/mengzonefire/22.03-of/openwrt-22.03/target/linux/ramips/patches-5.10/0038-mtd-ralink-add-support-for-MT7620-NAND-flash.patch" -o "$PATCH_FOLDER/0038-mtd-ralink-add-support-for-MT7620-NAND-flash.patch"
 
-# 4. 开启内核配置中的 NAND 驱动支持
+# 强制在内核配置中启用该驱动
 echo "CONFIG_MTD_NAND_RALINK=y" >> target/linux/ramips/mt7620/config-5.15
 
-# 5. 重写 Makefile 设备定义
+# 4. 重写 Makefile 规则 (解决 dd 报错和 ubinize 错误)
 MT7620_MAKEFILE="target/linux/ramips/image/mt7620.mk"
 sed -i '/define Device\/hiwifi_hc5861b/,/endef/d' $MT7620_MAKEFILE
 
