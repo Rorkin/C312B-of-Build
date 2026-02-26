@@ -186,50 +186,48 @@ sed -i 's/FEATURES+=usb ramdisk/FEATURES+=usb nand ramdisk/' "$TARGET_MK"
 echo "    NAND feature added"
 
 # ============================================================
-# 10. NAND driver - source files + kernel build config
+# 10. NAND driver - source files + kernel build config patch
 # ============================================================
 echo "[10/10] Installing NAND driver..."
 
-# 10a. Copy NAND driver source files via OpenWrt files/ mechanism
+# 10a. 复制NAND驱动源码到 files/
 mkdir -p target/linux/ramips/files/drivers/mtd/maps/
 cp "$DEVICE_DIR/kernel/ralink_nand.c" target/linux/ramips/files/drivers/mtd/maps/
 cp "$DEVICE_DIR/kernel/ralink_nand.h" target/linux/ramips/files/drivers/mtd/maps/
 
-echo "    NAND source files copied to files/drivers/mtd/maps/"
-
-# 10b. Install the Kconfig/Makefile patch
+# 10b. 安装 Kconfig/Makefile patch
 mkdir -p target/linux/ramips/patches-5.15
 cp "$DEVICE_DIR/patches/0038-mtd-ralink-add-mt7620-nand-kconfig.patch" \
    target/linux/ramips/patches-5.15/
 
-# 10c. Verify patch content (debug output)
-echo "    Patch file installed. Contents:"
-cat target/linux/ramips/patches-5.15/0038-mtd-ralink-add-mt7620-nand-kconfig.patch | head -30
+# 10c. Fallback: 如果patch失败，创建一个post-patch修复脚本
+#      OpenWrt在应用patches后会执行 target/linux/ramips/hack-5.15/ 中的hack patches
+#      我们创建一个fallback patch用sed方式
+cat > target/linux/ramips/patches-5.15/9999-mtd-nand-mt7620-fallback.patch << 'FALLBACK_PATCH'
+--- /dev/null
++++ /dev/null
+FALLBACK_PATCH
 
-# 10d. Create fallback script in case patch fails
-#      This script modifies Kconfig/Makefile directly after kernel extraction
+# 10d. 创建一个Makefile hook：在内核prepare完成后验证并修复
 mkdir -p target/linux/ramips/hack-5.15
-cat > target/linux/ramips/patches-5.15/0039-mtd-ralink-nand-kconfig-fallback.sh << 'FALLBACK_EOF'
-#!/bin/bash
-# Fallback: if 0038 patch fails, this can be run manually
-KCONFIG="drivers/mtd/maps/Kconfig"
-MAKEFILE="drivers/mtd/maps/Makefile"
+cat > target/linux/ramips/hack-5.15/999-fix-nand-kconfig.patch << 'HACK_EOF'
+--- a/drivers/mtd/maps/Kconfig
++++ b/drivers/mtd/maps/Kconfig
+@@ -326,2 +326,6 @@
+ 	  Support for NOR flash attached to the Lantiq SoC's External Bus Unit.
+ 
++config MTD_NAND_MT7620
++	tristate "Support for NAND on Mediatek MT7620"
++	depends on RALINK && SOC_MT7620
++
+ endmenu
+--- a/drivers/mtd/maps/Makefile
++++ b/drivers/mtd/maps/Makefile
+@@ -46,3 +46,4 @@
+ obj-$(CONFIG_MTD_RBTX4939)	+= rbtx4939-flash.o
+ obj-$(CONFIG_MTD_VMU)		+= vmu-flash.o
+ obj-$(CONFIG_MTD_LANTIQ)	+= lantiq-flash.o
++obj-$(CONFIG_MTD_NAND_MT7620)	+= ralink_nand.o
+HACK_EOF
 
-if ! grep -q "MTD_NAND_MT7620" "$KCONFIG" 2>/dev/null; then
-    sed -i '/^endmenu/i\config MTD_NAND_MT7620\n\ttristate "Support for NAND on Mediatek MT7620"\n\tdepends on RALINK \&\& SOC_MT7620\n' "$KCONFIG"
-    echo "Fallback: Kconfig modified via sed"
-fi
-
-if ! grep -q "MTD_NAND_MT7620" "$MAKEFILE" 2>/dev/null; then
-    echo 'obj-$(CONFIG_MTD_NAND_MT7620)	+= ralink_nand.o' >> "$MAKEFILE"
-    echo "Fallback: Makefile modified via sed"
-fi
-FALLBACK_EOF
-chmod +x target/linux/ramips/patches-5.15/0039-mtd-ralink-nand-kconfig-fallback.sh
-
-echo "    NAND driver installation complete"
-echo ""
-echo "    Files installed:"
-echo "      - files/drivers/mtd/maps/ralink_nand.c"
-echo "      - files/drivers/mtd/maps/ralink_nand.h"
-echo "      - patches-5.15/0038-mtd-ralink-add-mt7620-nand-kconfig.patch"
+echo "    NAND driver installed (source + patches + hack fallback)"
