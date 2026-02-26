@@ -191,25 +191,18 @@ sed -i 's/FEATURES+=usb ramdisk/FEATURES+=usb nand ramdisk/' "$TARGET_MK"
 echo "    NAND feature added"
 
 # ============================================================
-# 10. NAND driver - source files + kernel build config patch
+# 10. NAND driver - source files + build system integration
 # ============================================================
 echo "[10/10] Installing NAND driver..."
 
-# 10a. 复制NAND驱动源码到 files/
+# 10a. 复制NAND驱动源码到 files/ (OpenWrt标准机制，patch后自动复制)
 mkdir -p target/linux/ramips/files/drivers/mtd/maps/
 cp "$DEVICE_DIR/kernel/ralink_nand.c" target/linux/ramips/files/drivers/mtd/maps/
 cp "$DEVICE_DIR/kernel/ralink_nand.h" target/linux/ramips/files/drivers/mtd/maps/
 
-# 10b. 安装 Kconfig/Makefile patch
-mkdir -p target/linux/ramips/patches-5.15
-cp "$DEVICE_DIR/patches/0038-mtd-ralink-add-mt7620-nand-kconfig.patch" \
-   target/linux/ramips/patches-5.15/
+# 10b. 清理旧的patch文件(如果存在)
+rm -f target/linux/ramips/patches-5.15/0038-mtd-ralink-add-mt7620-nand-*.patch
+rm -f target/linux/ramips/patches-5.15/9999-*.patch
 
-# 10c. 清理可能存在的旧垃圾文件
-rm -f target/linux/ramips/patches-5.15/9999-mtd-nand-mt7620-fallback.patch
-rm -f target/linux/ramips/hack-5.15/999-fix-nand-kconfig.patch
-
-echo "    NAND driver installed"
-echo "      - files/drivers/mtd/maps/ralink_nand.c"
-echo "      - files/drivers/mtd/maps/ralink_nand.h"  
-echo "      - patches-5.15/0038-mtd-ralink-add-mt7620-nand-kconfig.patch"
+echo "    NAND source files installed via files/ mechanism"
+echo "    Kconfig/Makefile will be injected during kernel prepare"
