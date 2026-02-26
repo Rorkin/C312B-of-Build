@@ -6,7 +6,7 @@
 
 / {
 	compatible = "hiwifi,hc5861b", "mediatek,mt7620a-soc";
-	model = "HiWiFi HC5861B";
+	model = "HiWiFi HC5861B (R33)";
 
 	aliases {
 		led-boot = &led_system;
@@ -17,7 +17,7 @@
 
 	leds {
 		compatible = "gpio-leds";
-		system {
+		led_system: system {
 			label = "blue:system";
 			gpios = <&gpio0 11 GPIO_ACTIVE_LOW>;
 		};
@@ -38,55 +38,56 @@
 	};
 };
 
+/* 核心修复：直接在总线下定义 NAND 节点 */
+&palmbus {
+	nandc@0 {
+		compatible = "mediatek,mt7620-nand";
+		reg = <0x0 0x100>;
+		status = "okay";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&nd_sd_pins>;
+
+		nand-chip@0 {
+			reg = <0>;
+			label = "mtk-nand";
+
+			partitions {
+				compatible = "fixed-partitions";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				partition@0 {
+					label = "u-boot";
+					reg = <0x0 0x30000>;
+					read-only;
+				};
+
+				partition@30000 {
+					label = "u-boot-env";
+					reg = <0x30000 0x10000>;
+					read-only;
+				};
+
+				factory: partition@40000 {
+					label = "factory";
+					reg = <0x40000 0x10000>;
+					read-only;
+				};
+
+				partition@50000 {
+					label = "firmware";
+					reg = <0x50000 0x7fb0000>;
+				};
+			};
+		};
+	};
+};
+
 &state_default {
 	gpio {
 		groups = "i2c", "uartf", "rgmii1", "rgmii2", "wled", "nd_sd";
 		function = "gpio";
-	};
-};
-
-&gdma {
-	status = "okay";
-};
-
-/* 关键修复：将 &nand 修改为 &nandc */
-&nandc {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&nd_sd_pins>;
-
-	nand-chip@0 {
-		reg = <0>;
-		label = "mtk-nand";
-
-		partitions {
-			compatible = "fixed-partitions";
-			#address-cells = <1>;
-			#size-cells = <1>;
-
-			partition@0 {
-				label = "u-boot";
-				reg = <0x0 0x30000>;
-				read-only;
-			};
-
-			partition@30000 {
-				label = "u-boot-env";
-				reg = <0x30000 0x10000>;
-				read-only;
-			};
-
-			factory: partition@40000 {
-				label = "factory";
-				reg = <0x40000 0x10000>;
-				read-only;
-			};
-
-			partition@50000 {
-				label = "firmware";
-				reg = <0x50000 0x7fb0000>;
-			};
-		};
 	};
 };
 
